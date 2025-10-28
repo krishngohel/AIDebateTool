@@ -13,11 +13,8 @@ const publicDir = path.join(__dirname, 'public');
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// IMPORTANT: disable auto-serving index.html
 app.use(express.static(publicDir, { index: false }));
 
-// Explicit page routes (no cache so you see updates)
 app.get('/', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path.join(publicDir, 'welcome.html'));
@@ -28,95 +25,197 @@ app.get('/debate', (req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 
-// ===== API =====
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-function countWords(t){ return t.trim().split(/\s+/).filter(Boolean).length; }
-
+// ====== DEBATE ENDPOINT (3-round limit) ======
 app.post('/api/debate', async (req, res) => {
   try {
-    const { message } = req.body;
+    const { message, difficulty = "Normal", round = 1 } = req.body;
     if (!message) return res.status(400).json({ error: 'Missing message' });
-    if (countWords(message) > 90) return res.status(400).json({ error: 'Please keep under 90 words' });
 
-    const systemPrompt = `
-You are "DebateBot", a friendly and respectful debater for middle school students.
-Provide short, kind counterpoints with one clear reason (under 120 words).
-Always use age-appropriate, educational language.
+    // If debate is over — return cleanly
+    if (round > 3) {
+      return res.json({
+        reply: "",
+        stance: "mixed",
+        outcome: "student",
+        score: 0.4,
+        round,
+        nextRound: round,
+        endDebate: true
+      });
+    }
+
+    const politeRules = `
+General rules (always):
+- Always be kind, respectful, and age-appropriate.
+- Use short, clear sentences (≤120 words).
+- Do NOT end or summarize the debate unless explicitly told to.
+- Encourage curiosity and reflection.
 `;
 
-    const response = await openai.responses.create({
-      model: 'gpt-4o-mini',
-      input: `${systemPrompt}\n\nStudent said:\n"${message}"\n\nDebateBot reply:`
-    });
+    // Difficulty profiles
+    const profiles = {
+      Beginner: {
+        style: `
+Gentle, supportive coach. Offer 1 kind counterpoint with familiar examples.
+Concede easily when student sounds reasonable.
+`,
+        bias: 0.35
+      },
+      Intermediate: {
+        style: `
+Helpful and fair. Give 1–2 clear counterpoints and sometimes agree.
+`,
+        bias: 0.45
+      },
+      Normal: {
+        style: `
+Balanced and logical. Provide 1 clear counterpoint with example; concede only for strong reasoning.
+`,
+        bias: 0.5
+      },
+      Hard: {
+        style: `
+Analytical but kind. Address multiple aspects logically. Rarely concede.
+`,
+        bias: 0.6
+      },
+      Extreme: {
+        style: `
+Rigorous yet polite. Challenge assumptions logically and rarely concede.
+`,
+        bias: 0.7
+      }
+    };
 
-    res.json({ reply: response.output_text?.trim() || 'Hmm, I need more time to think.' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to get AI response.' });
-  }
-});
-// --- Add after /api/debate ---
-app.post('/api/explain', async (req, res) => {
-  try {
-    const { student, reply } = req.body;
-    if (!student || !reply) return res.status(400).json({ error: 'Missing student or reply' });
+    const profile = profiles[difficulty] || profiles.Normal;
 
+    // === Updated Prompt Logic ===
     const prompt = `
-You are writing a SHORT, kid-friendly "thinking outline" that explains how the AI formed its reply.
-Rules:
-- 3 to 5 bullet points, each max ~14 words.
-- Use simple language and 1 emoji per bullet.
-- Do NOT reveal hidden chain-of-thought; keep it high-level (plan/strategy).
-- Output ONLY JSON with this shape:
+${politeRules}
+
+You are currently in **Round ${round} of 3** of a short debate.
+Your job: reply with a respectful counterargument or reflection.
+Do NOT end the debate, congratulate the student, or summarize — just give your next thoughtful point.
+Only on round 4 or later would you end politely (not now).
+
+Difficulty: ${difficulty}
+Style:
+${profile.style}
+
+Output ONLY JSON:
 {
-  "extracted_claim": "string",
-  "stance": "agree" | "disagree" | "mixed",
-  "strategy": "string",
-  "steps": ["point 1", "point 2", "point 3"]
+  "reply": "string",
+  "stance": "agree"|"disagree"|"mixed",
+  "outcome": "student"|"ai"|"mixed",
+  "score": number
 }
 
-Student said: """${student}"""
-AI reply: """${reply}"""
-Return JSON only.
+Student said:
+"""${message}"""
 `;
 
     const r = await openai.responses.create({
       model: "gpt-4o-mini",
-      input: prompt,
+      input: prompt
+    });
+
+    const text = (r.output_text || "").trim();
+    let data;
+
+    try {
+      const start = text.indexOf("{");
+      const end = text.lastIndexOf("}");
+      data = JSON.parse(text.slice(start, end + 1));
+    } catch {
+      data = {
+        reply: "That's an interesting point! Here's another way to think about it.",
+        stance: "mixed",
+        outcome: "mixed",
+        score: profile.bias
+      };
+    }
+
+    // Clean and finalize response
+    if (typeof data.score !== "number") data.score = profile.bias;
+    data.score = Math.max(0, Math.min(1, data.score));
+    if (!["student", "ai", "mixed"].includes(data.outcome)) data.outcome = "mixed";
+    if (!["agree", "disagree", "mixed"].includes(data.stance)) data.stance = "mixed";
+    if (!data.reply) data.reply = "Interesting point! Here's something to consider...";
+
+    // Round tracking
+    data.round = round;
+    data.nextRound = round + 1;
+    data.endDebate = data.nextRound > 3;
+
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to get AI response." });
+  }
+});
+
+// ====== EXPLAIN ENDPOINT ======
+app.post('/api/explain', async (req, res) => {
+  try {
+    const { student, reply } = req.body;
+    if (!student || !reply)
+      return res.status(400).json({ error: 'Missing student or reply' });
+
+    const prompt = `
+Explain briefly how the AI formed its reply.
+3–5 bullets, ≤14 words each, 1 emoji per bullet.
+Output ONLY JSON:
+{
+  "extracted_claim":"string",
+  "stance":"agree"|"disagree"|"mixed",
+  "strategy":"string",
+  "steps":["point1","point2","point3"]
+}
+
+Student: """${student}"""
+AI Reply: """${reply}"""
+`;
+
+    const r = await openai.responses.create({
+      model: "gpt-4o-mini",
+      input: prompt
     });
 
     const text = (r.output_text || "").trim();
     let json;
     try {
-      const start = text.indexOf('{');
-      const end = text.lastIndexOf('}');
+      const start = text.indexOf("{");
+      const end = text.lastIndexOf("}");
       json = JSON.parse(text.slice(start, end + 1));
     } catch {
       json = {
         extracted_claim: student.slice(0, 140),
         stance: "mixed",
-        strategy: "offer a polite counterpoint and a compromise",
+        strategy: "give a polite counterpoint and reflection",
         steps: [
-          "🔍 Identify the main idea",
-          "🎯 Pick one clear reason",
-          "🧩 Give a simple example",
-          "🤝 Offer a fair compromise"
+          "🔍 Find the main idea",
+          "🎯 Give one counterpoint",
+          "🧩 Add an example",
+          "🤝 Suggest compromise"
         ]
       };
     }
+
     if (!Array.isArray(json.steps) || !json.steps.length) {
       json.steps = [
-        "🔍 Identify the main idea",
-        "🎯 Pick one clear reason",
-        "🧩 Give a simple example",
-        "🤝 Offer a fair compromise"
+        "🔍 Find the main idea",
+        "🎯 Give one counterpoint",
+        "🧩 Add an example",
+        "🤝 Suggest compromise"
       ];
     }
+
     res.json(json);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to build explanation.' });
+    res.status(500).json({ error: "Failed to build explanation." });
   }
 });
 
