@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Welcome • AI Debate Tool</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <section id="welcomeScreen">
+    <div class="welcome-card">
+      <h1>Welcome to the AI Debate Tool</h1>
+      <p class="muted">Please fill this out to get started.</p>
+
+      <!-- On submit, browser navigates to /debate -->
+      <form id="welcomeForm" action="/debate" novalidate>
+        <div class="field-row">
+          <label for="firstName">First name</label>
+          <input id="firstName" type="text" required maxlength="30" autocomplete="given-name" />
+        </div>
+
+        <div class="field-row">
+          <label for="lastInitial">Last initial</label>
+          <div class="inline">
+            <input id="lastInitial" type="text" required maxlength="1" pattern="[A-Za-z]" />
+            <small class="hint">One letter (A–Z).</small>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label for="grade">Grade</label>
+          <select id="grade" required>
+            <option value="" disabled selected>Select grade</option>
+            <option>6</option><option>7</option><option>8</option>
+          </select>
+        </div>
+
+        <div class="field-row">
+          <label for="difficulty">Difficulty</label>
+          <select id="difficulty" required>
+            <option value="" disabled selected>Select difficulty</option>
+            <option>Beginner</option><option>Intermediate</option>
+            <option>Normal</option><option>Hard</option><option>Extreme</option>
+          </select>
+        </div>
+
+        <button id="startBtn" class="btn-primary" type="submit">Start Debating</button>
+      </form>
+    </div>
+  </section>
+
+  <script>
+  // Save to localStorage, then let the form navigate to /debate
+  document.addEventListener("DOMContentLoaded", () => {
+    const SETTINGS_KEY = "debate_user_settings_v1";
+    const form = document.getElementById("welcomeForm");
+    document.getElementById("startBtn")?.addEventListener("click", () => form.requestSubmit());
+
+    form.addEventListener("submit", () => {
+      const firstName   = (document.getElementById("firstName")?.value || "").trim();
+      const lastInitial = (document.getElementById("lastInitial")?.value || "").trim().slice(0,1).toUpperCase();
+      const grade       = document.getElementById("grade")?.value || "";
+      const difficulty  = document.getElementById("difficulty")?.value || "";
+      if (!firstName || !lastInitial || !grade || !difficulty) return;
+
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        firstName, lastInitial, grade, difficulty, ts: Date.now()
+      }));
+    });
+  });
+  </script>
+</body>
+</html>

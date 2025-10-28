@@ -1,89 +1,133 @@
-// script.js
+// script.js – debate page logic
 document.addEventListener("DOMContentLoaded", () => {
-  const chatBox = document.getElementById("chatBox");
-  const studentInput = document.getElementById("studentInput");
-  const submitBtn = document.getElementById("submitBtn");
-  const studentThought = document.getElementById("studentThought");
-  const aiThought = document.getElementById("aiThought");
-  const lightBulb = document.getElementById("lightBulb");
+  const SETTINGS_KEY = "debate_user_settings_v1";
 
+  // Guard: if settings missing, go to welcome
+  let settings = null;
+  try { settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null"); } catch {}
+  if (!settings) { window.location.replace("/"); return; }
+
+  // Elements
+  const chatBox        = document.getElementById("chatBox");
+  const studentInput   = document.getElementById("studentInput");
+  const submitBtn      = document.getElementById("submitBtn");
+  const studentThought = document.getElementById("studentThought"); // top bubble
+  const aiThought      = document.getElementById("aiThought");      // bottom bubble
+  const lightBulb      = document.getElementById("lightBulb");
+
+  // Helpers
   function addMessage(sender, text) {
-    const msg = document.createElement("div");
-    msg.classList.add("chat-message");
-    msg.innerHTML = `<strong>${sender}:</strong> ${text}`;
-    chatBox.appendChild(msg);
+    const div = document.createElement("div");
+    div.className = `chat-message ${sender === "AI" ? "ai" : "student"}`;
+    div.innerHTML = `<strong>${sender}:</strong> ${text}`;
+    chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
-  const aiThoughtSteps = [
-    "Hmmm 🤔 let me think...",
-    "Analyzing your point 💭",
-    "Because of that, maybe this makes sense...",
-    "Interesting! Let's see..."
-  ];
-
-  function animateAIThoughts(studentText) {
-    studentThought.textContent = "💭 " + studentText;
-    studentThought.classList.add("show");
-
-    aiThought.classList.remove("show");
-    lightBulb.classList.remove("on");
-
-    aiThoughtSteps.forEach((step, index) => {
-      setTimeout(() => {
-        lightBulb.classList.add("on");
-        aiThought.textContent = "💭 " + step;
-        aiThought.classList.add("show");
-      }, 600 + index * 900);
-    });
+  // Show a bubble (handles your CSS animation by adding .show)
+  function showBubble(el, text) {
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add("show");   // <-- IMPORTANT: makes it visible
   }
 
-  async function fetchDebateReply(message) {
-    const resp = await fetch('/api/debate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  function mapDifficultyToBehavior(diff){
+    switch (diff) {
+      case "Beginner":     return { maxWords: 60 };
+      case "Intermediate": return { maxWords: 80 };
+      case "Normal":       return { maxWords: 90 };
+      case "Hard":         return { maxWords:110 };
+      case "Extreme":      return { maxWords:130 };
+      default:             return { maxWords: 90 };
+    }
+  }
+  const behavior = mapDifficultyToBehavior(settings?.difficulty || "Normal");
+
+  async function callDebateAPI(message){
+    const resp = await fetch("/api/debate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message })
     });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(err.error || `Request failed with ${resp.status}`);
-    }
     const data = await resp.json();
-    return data.reply || "I need a moment to think of a counterpoint.";
+    if (!resp.ok) throw new Error(data?.error || "API error");
+    return data.reply || "";
   }
 
-  submitBtn.addEventListener("click", async () => {
-    const text = studentInput.value.trim();
-    if (!text) {
-      alert("Please enter something!");
-      return;
-    }
-    // Enforce the 90-word cap in the UI, too.
+  async function callExplainAPI(student, reply){
+    const resp = await fetch("/api/explain", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student, reply })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data?.error || "Explain error");
+    return data;
+  }
+
+  function outlineToText(outline, fallbackClaim) {
+    const claim = outline?.extracted_claim || fallbackClaim || "";
+    const steps = Array.isArray(outline?.steps) ? outline.steps.slice(0, 4) : [];
+    const strategy = outline?.strategy ? `\n\nStrategy: ${outline.strategy}` : "";
+    const bullets = steps.length
+      ? steps.map(s => `• ${s}`).join("\n")
+      : "• 🔍 Identify the main idea\n• 🎯 Choose one clear reason\n• 🧩 Give a simple example\n• 🤝 Offer a fair compromise";
+    return `${claim ? `“${claim}”\n\n` : ""}${bullets}${strategy}`;
+  }
+
+  submitBtn?.addEventListener("click", async () => {
+    const text = (studentInput.value || "").trim();
+    if (!text) return;
+
     const words = text.split(/\s+/).filter(Boolean);
-    if (words.length > 90) {
-      alert(`Please keep your argument at ≤ 90 words. You used ${words.length}.`);
+    if (words.length > behavior.maxWords) {
+      alert(`Please keep your argument under ${behavior.maxWords} words for ${settings.difficulty || "Normal"}.`);
       return;
     }
 
-    addMessage("Student", text);
+    // Immediately show student's claim and "Thinking…" UI
+    showBubble(studentThought, `Student: ${text}`);
+    showBubble(aiThought, "AI: Thinking…");
+    lightBulb.classList.remove("on");
+
+    addMessage(settings?.firstName || "Student", text);
     studentInput.value = "";
 
-    // Start the "thinking" animation
-    animateAIThoughts(text);
-
     try {
-      const aiReply = await fetchDebateReply(text);
+      const reply = await callDebateAPI(text);
 
-      // Wait until the thought animation finishes (~ aiThoughtSteps * 900 + 600)
-      const finalDelay = 600 + aiThoughtSteps.length * 900 + 200;
-      setTimeout(() => {
-        aiThought.textContent = "🤖 " + aiReply;
-        addMessage("AI", aiReply);
-      }, finalDelay);
-    } catch (e) {
-      addMessage("AI", "Sorry, I ran into a problem reaching the debate service.");
-      console.error(e);
+      // Try to get a short post-hoc outline; if it fails, fallback
+      let outline;
+      try {
+        outline = await callExplainAPI(text, reply);
+      } catch {
+        outline = {
+          extracted_claim: text,
+          strategy: "politely counter with 1 reason and a compromise",
+          steps: [
+            "🔍 Identify the main idea",
+            "🎯 Choose one clear reason",
+            "🧩 Give a simple example",
+            "🤝 Offer a fair compromise"
+          ]
+        };
+      }
+
+      // Top bubble = outline, bottom bubble = final reply
+      showBubble(studentThought, outlineToText(outline, text));
+      showBubble(aiThought, `AI: ${reply}`);
+      addMessage("AI", reply);
+
+      // Lightbulb blink
+      lightBulb.classList.add("on");
+      setTimeout(() => lightBulb.classList.remove("on"), 900);
+
+    } catch (err) {
+      showBubble(aiThought, "AI: (error) Please try again.");
+      addMessage("AI", err.message || "Network error — please try again.");
     }
   });
-});
 
+  // Friendly greeting in the chat
+  addMessage("AI", `Welcome back, ${settings.firstName} ${settings.lastInitial}. You chose ${settings.difficulty || "Normal"}.`);
+});
