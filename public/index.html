@@ -20,16 +20,17 @@
       <button id="submitBtn">Submit Argument</button>
 
       <!-- Win Meter HUD -->
-      <div id="hud" class="hud hidden" aria-live="polite">
-        <div class="hud-bar" role="progressbar" aria-label="Who is winning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
-          <div class="hud-fill" id="hudFill" style="width:50%"></div>
-        </div>
-        <div class="hud-legend">
-          <span>Student</span>
-          <span id="hudLabel">Neck and neck</span>
-          <span>AI</span>
-        </div>
-      </div>
+<div id="hud" class="hud hidden" aria-live="polite">
+  <div class="hud-bar" role="progressbar" aria-label="Who is winning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
+    <div class="hud-fill" id="hudFill" style="width:50%"></div>
+  </div>
+  <div class="hud-legend">
+    <span>Student</span>
+    <span id="hudLabel">Neck and neck</span>
+    <span>AI</span>
+  </div>
+</div>
+
 
       <div id="reflection" class="reflection hidden">
         <h3>Reflection</h3>
@@ -55,13 +56,15 @@
   </div>
 
   <!-- Debate Over Popup -->
-  <div id="popup" class="popup hidden">
-    <div class="popup-content">
-      <h2>Debate is over 🎉</h2>
-      <p>Great job! Ready for the next student?</p>
-      <button id="newAttemptBtn">Back to Welcome</button>
-    </div>
+  <!-- End of Debate Popup -->
+<div id="popup" class="popup hidden">
+  <div class="popup-content">
+    <h2 class="popup-title"></h2>
+    <p class="popup-message"></p>
+    <button class="closePopup">Back to Start</button>
   </div>
+</div>
+
 
   <!-- Welcome Popup -->
   <div id="welcomePopup" class="popup">

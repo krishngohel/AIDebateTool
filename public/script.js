@@ -1,4 +1,5 @@
-// script.js – includes win meter HUD below submit button
+// script.js – welcome popup → topic popup → debate (3 rounds)
+// + safe filters + win meter + dynamic reasoning + finish popup (on click only)
 document.addEventListener("DOMContentLoaded", () => {
   const SETTINGS_KEY = "debate_user_settings_v1";
   let settings = null;
@@ -13,7 +14,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const aiThought      = document.getElementById("aiThought");
   const lightBulb      = document.getElementById("lightBulb");
   const roundTracker   = document.getElementById("roundTracker");
-  const popup          = document.getElementById("popup");
+
+  // Popups
+  const finishPopup    = document.getElementById("popup");
   const newAttemptBtn  = document.getElementById("newAttemptBtn");
   const welcomePopup   = document.getElementById("welcomePopup");
   const understoodBtn  = document.getElementById("understoodBtn");
@@ -21,7 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const confirmTopicBtn= document.getElementById("confirmTopicBtn");
   const topicButtons   = Array.from(document.querySelectorAll(".topic-btn"));
 
-  // HUD elements
+  // HUD
   const hud        = document.getElementById("hud");
   const hudFill    = document.getElementById("hudFill");
   const hudLabelEl = document.getElementById("hudLabel");
@@ -32,34 +35,28 @@ document.addEventListener("DOMContentLoaded", () => {
   let finishedReady = false;
   let selectedTopic = settings?.topic || null;
   let sensitiveStrikesThisRound = 0;
+  let lastHUD = { meter: 50, leader: "tied", label: "Neck and neck" };
 
-  // Helpers
+  // ---------- Helpers ----------
+  const safe = (el, cb) => { if (el) cb(el); };
+
   function updateRoundDisplay() {
-    if (roundTracker) roundTracker.textContent = `Round ${currentRound} of ${MAX_ROUNDS}`;
+    safe(roundTracker, el => el.textContent = `Round ${currentRound} of ${MAX_ROUNDS}`);
   }
+
   function addMessage(sender, text) {
+    if (!chatBox) return;
     const div = document.createElement("div");
     div.className = `chat-message ${sender === "AI" ? "ai" : "student"}`;
     div.innerHTML = `<strong>${sender}:</strong> ${text}`;
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
   }
+
   function showBubble(el, text) {
     if (!el) return;
     el.textContent = text;
     el.classList.add("show");
-  }
-  function showPopup() { popup.classList.remove("hidden"); }
-
-  // HUD updater
-  function updateHUD(meter, label) {
-    if (!hud || !hudFill || !hudLabelEl) return;
-    hud.classList.remove("hidden");
-    const clamped = Math.max(0, Math.min(100, meter | 0));
-    hudFill.style.width = `${clamped}%`;
-    hudLabelEl.textContent = label || "Neck and neck";
-    const bar = hud.querySelector(".hud-bar");
-    if (bar) bar.setAttribute("aria-valuenow", String(clamped));
   }
 
   function mapDifficultyToBehavior(diff){
@@ -74,7 +71,45 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const behavior = mapDifficultyToBehavior(settings?.difficulty || "Normal");
 
-  // === API calls ===
+  // HUD controls
+  function updateHUD(meter, label) {
+    if (!hud || !hudFill || !hudLabelEl) return;
+    hud.classList.remove("hidden");
+    const clamped = Math.max(0, Math.min(100, meter ?? 50));
+    hudFill.style.width = `${clamped}%`;
+    hudLabelEl.textContent = label || "Neck and neck";
+  }
+  updateHUD(50, "Neck and neck");
+
+  // Round-aware reasoning
+  function makeLeadReasoning(round, hudObj, stance, topic) {
+    const who = hudObj?.leader || "tied";
+    const t = topic ? ` on “${topic}”` : "";
+    const r1 = {
+      ai:      `After Round 1${t}, the AI is slightly ahead for clearer structure and examples.`,
+      student: `After Round 1${t}, the student leads with relatable reasons and personal experience.`,
+      tied:    `After Round 1${t}, it’s very close — both sides made clear opening points.`
+    };
+    const r2 = {
+      ai:      `After Round 2${t}, the AI pulled ahead with tighter logic and focus.`,
+      student: `After Round 2${t}, the student is ahead with stronger support and real-life links.`,
+      tied:    `After Round 2${t}, it’s still neck and neck — strong points on both sides.`
+    };
+    const r3 = {
+      ai:      `After the final round${t}, the AI edges ahead thanks to organized reasoning.`,
+      student: `After the final round${t}, the student leads with convincing, well-supported ideas.`,
+      tied:    `After the final round${t}, it’s very close — thoughtful arguments from both sides.`
+    };
+    let bank = r1;
+    if (round >= 3) bank = r3; else if (round === 2) bank = r2;
+    if (who === "ai") return bank.ai;
+    if (who === "student") return bank.student;
+    if (stance === "agree") return bank.student;
+    if (stance === "disagree") return bank.ai;
+    return bank.tied;
+  }
+
+  // ---------- API ----------
   async function callDebateAPI(message){
     const resp = await fetch("/api/debate", {
       method: "POST",
@@ -115,24 +150,56 @@ document.addEventListener("DOMContentLoaded", () => {
     const strategy = outline?.strategy ? `\n\nStrategy: ${outline.strategy}` : "";
     const bullets = steps.length
       ? steps.map(s => `• ${s}`).join("\n")
-      : "• 🔍 Identify the main idea\n• 🎯 Choose one clear reason\n• 🧩 Give a simple example\n• 🤝 Offer a fair compromise";
+      : "• 🔍 Identify main idea\n• 🎯 Give one reason\n• 🧩 Add example\n• 🤝 Suggest compromise";
     return `${claim ? `“${claim}”\n\n` : ""}${bullets}${strategy}`;
   }
 
-  // === Return to welcome ===
-  newAttemptBtn.addEventListener("click", () => {
-    localStorage.removeItem(SETTINGS_KEY);
-    window.location.href = "/";
-  });
+  // ---------- Result Popup ----------
+  function showResultPopup(hudObj) {
+    if (!finishPopup) return;
+    finishPopup.classList.remove("hidden");
 
-  // === Welcome → Topic flow ===
+    const popupTitle = finishPopup.querySelector(".popup-title");
+    const popupMsg   = finishPopup.querySelector(".popup-message");
+    const winner     = hudObj?.leader || "tied";
+    let title = "", msg = "";
+
+    if (winner === "student") {
+      title = "🎉 You Won!";
+      msg   = "Excellent job! Your arguments were strong, clear, and persuasive.";
+    } else if (winner === "ai") {
+      title = "🤖 The AI Won This Time!";
+      msg   = "Great effort! Your ideas were thoughtful. Keep practicing your reasoning!";
+    } else {
+      title = "🤝 It’s a Tie!";
+      msg   = "Both sides made solid points and stayed on topic. Nice work!";
+    }
+
+    if (popupTitle) popupTitle.textContent = title;
+    if (popupMsg)   popupMsg.textContent   = msg;
+
+    const anyBtn = finishPopup.querySelector("button");
+    if (anyBtn) {
+      anyBtn.textContent = "Back to Welcome";
+      anyBtn.onclick = () => {
+        localStorage.removeItem(SETTINGS_KEY);
+        window.location.href = "/";
+      };
+    }
+  }
+
+  // ---------- Popup setup ----------
+  safe(finishPopup, el => el.classList.add("hidden"));
+  safe(topicPopup,  el => el.classList.add("hidden"));
+  safe(welcomePopup, el => el.classList.remove("hidden"));
+
   studentInput.disabled = true;
   submitBtn.disabled = true;
-  welcomePopup.classList.remove("hidden");
 
   understoodBtn.addEventListener("click", () => {
     welcomePopup.classList.add("hidden");
     topicPopup.classList.remove("hidden");
+    confirmTopicBtn.disabled = true;
   });
 
   topicButtons.forEach(btn => {
@@ -156,20 +223,25 @@ document.addEventListener("DOMContentLoaded", () => {
     addMessage("AI", `Great! We'll debate: “${selectedTopic}”. Keep arguments school-appropriate and on topic. 👍`);
   });
 
-  // === Main debate loop ===
+  // ---------- Main Debate Flow ----------
   submitBtn.addEventListener("click", async () => {
-    if (finishedReady) { showPopup(); return; }
+    // Only show popup if debate already finished
+    if (finishedReady) { 
+      showResultPopup(lastHUD); 
+      return; 
+    }
 
     const text = (studentInput.value || "").trim();
     if (!text) return;
 
+    if (!selectedTopic) {
+      topicPopup.classList.remove("hidden");
+      return;
+    }
+
     const words = text.split(/\s+/).filter(Boolean);
     if (words.length > behavior.maxWords) {
       alert(`Please keep your argument under ${behavior.maxWords} words.`);
-      return;
-    }
-    if (!selectedTopic) {
-      topicPopup.classList.remove("hidden");
       return;
     }
 
@@ -182,16 +254,11 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const data = await callDebateAPI(text);
 
-      // === Update Win Meter ===
-      if (data.hud) updateHUD(data.hud.meter, data.hud.label);
-
-      // === Sensitive / Off-topic checks ===
       if (data.violation) {
-        const msg = data.instructions || "Let's keep things school-safe.";
-        showBubble(aiThought, `AI: ${msg}`);
+        const msg = data.instructions || "Let's stay appropriate and on topic.";
         addMessage("AI", msg);
-        lightBulb.classList.add("on");
-        setTimeout(() => lightBulb.classList.remove("on"), 600);
+        showBubble(aiThought, `AI: ${msg}`);
+        if (data.hud) lastHUD = data.hud;
 
         if (data.endDebate) {
           studentInput.disabled = true;
@@ -201,28 +268,21 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      sensitiveStrikesThisRound = 0;
+      addMessage("AI", data.reply);
 
-      // === Explanation and reply ===
-      let outline;
-      try {
-        outline = await callExplainAPI(text, data.reply);
-      } catch {
-        outline = {
-          extracted_claim: text,
-          strategy: "politely counter with 1 reason and a compromise",
-          steps: [
-            "🔍 Identify the main idea",
-            "🎯 Choose one clear reason",
-            "🧩 Give a simple example",
-            "🤝 Offer a fair compromise"
-          ]
-        };
+      if (data.hud) {
+        updateHUD(data.hud.meter, data.hud.label);
+        lastHUD = data.hud;
       }
 
-      showBubble(studentThought, outlineToText(outline, text));
-      showBubble(aiThought, `AI: ${data.reply}`);
-      addMessage("AI", data.reply);
+      const reasoning = makeLeadReasoning(currentRound, data.hud, data.stance, selectedTopic);
+      showBubble(aiThought, reasoning);
+
+      try {
+        const outline = await callExplainAPI(text, data.reply);
+        showBubble(studentThought, outlineToText(outline, text));
+      } catch {}
+
       lightBulb.classList.add("on");
       setTimeout(() => lightBulb.classList.remove("on"), 900);
 
@@ -231,13 +291,13 @@ document.addEventListener("DOMContentLoaded", () => {
         submitBtn.textContent = "Finish Debate";
         finishedReady = true;
       } else {
-        currentRound = (data.nextRound || currentRound + 1);
+        currentRound = data.nextRound || currentRound + 1;
         updateRoundDisplay();
       }
 
     } catch (err) {
-      showBubble(aiThought, "AI: (error) Please try again.");
       addMessage("AI", err.message || "Network error — please try again.");
+      showBubble(aiThought, "AI: (error) Please try again.");
     }
   });
 
