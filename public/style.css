@@ -260,3 +260,60 @@ input:focus, select:focus { outline: none; box-shadow: 0 0 12px #9a30ff; }
 .popup-content {
   animation: fadeIn 0.4s ease;
 }
+
+.topic-btn {
+  background: #2b004d;
+  color: #f3e8ff;
+  border: 1px solid #7a00ff;
+  border-radius: 10px;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+  transition: transform .15s ease, background .2s ease, border-color .2s ease;
+  text-align: left;
+}
+.topic-btn:hover { transform: translateY(-1px); background:#3a0066; border-color:#9a30ff; }
+.topic-btn.selected { outline: 3px solid #c69cff; }
+
+.win-meter { margin-top: 12px; background:#1a0033; border-radius:10px; height:12px; overflow:hidden; }
+.win-meter .fill { height:100%; width:50%; transition: width .4s ease; }
+.win-meter .fill[data-leader="student"] { background:#45d483; } /* green-ish */
+.win-meter .fill[data-leader="ai"]      { background:#ff7aa2; } /* pink-ish */
+.win-meter .fill[data-leader="tied"]    { background:#c69cff; } /* neutral */
+#winMeterLabel { margin-top:6px; font-size:.9rem; color:#d9c0ff; text-align:center; }
+
+/* ===== Win Meter HUD ===== */
+.hud {
+  margin-top: 12px;
+  background: rgba(35, 0, 60, 0.6);
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: 0 0 18px rgba(180, 0, 255, 0.2);
+}
+
+.hud.hidden { display: none; }
+
+.hud-bar {
+  position: relative;
+  height: 14px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(198,156,255,0.25), rgba(154,230,255,0.25));
+  overflow: hidden;
+  box-shadow: inset 0 0 8px rgba(0,0,0,0.25);
+}
+
+.hud-fill {
+  height: 100%;
+  width: 50%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #c69cff, #9ae6ff);
+  transition: width 350ms ease;
+}
+
+.hud-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: #e1b6ff;
+  margin-top: 6px;
+}
+

@@ -1,4 +1,4 @@
-// script.js – debate page logic (welcome popup + finish debate flow)
+// script.js – includes win meter HUD below submit button
 document.addEventListener("DOMContentLoaded", () => {
   const SETTINGS_KEY = "debate_user_settings_v1";
   let settings = null;
@@ -17,17 +17,26 @@ document.addEventListener("DOMContentLoaded", () => {
   const newAttemptBtn  = document.getElementById("newAttemptBtn");
   const welcomePopup   = document.getElementById("welcomePopup");
   const understoodBtn  = document.getElementById("understoodBtn");
+  const topicPopup     = document.getElementById("topicPopup");
+  const confirmTopicBtn= document.getElementById("confirmTopicBtn");
+  const topicButtons   = Array.from(document.querySelectorAll(".topic-btn"));
 
-  // Rounds/state
+  // HUD elements
+  const hud        = document.getElementById("hud");
+  const hudFill    = document.getElementById("hudFill");
+  const hudLabelEl = document.getElementById("hudLabel");
+
+  // State
   let currentRound = 1;
   const MAX_ROUNDS = 3;
-  let finishedReady = false; // becomes true after AI's 3rd reply
+  let finishedReady = false;
+  let selectedTopic = settings?.topic || null;
+  let sensitiveStrikesThisRound = 0;
 
   // Helpers
   function updateRoundDisplay() {
     if (roundTracker) roundTracker.textContent = `Round ${currentRound} of ${MAX_ROUNDS}`;
   }
-
   function addMessage(sender, text) {
     const div = document.createElement("div");
     div.className = `chat-message ${sender === "AI" ? "ai" : "student"}`;
@@ -35,19 +44,22 @@ document.addEventListener("DOMContentLoaded", () => {
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
   }
-
   function showBubble(el, text) {
     if (!el) return;
     el.textContent = text;
     el.classList.add("show");
   }
+  function showPopup() { popup.classList.remove("hidden"); }
 
-  function showPopup() {
-    popup.classList.remove("hidden");
-  }
-
-  function hidePopup() {
-    popup.classList.add("hidden");
+  // HUD updater
+  function updateHUD(meter, label) {
+    if (!hud || !hudFill || !hudLabelEl) return;
+    hud.classList.remove("hidden");
+    const clamped = Math.max(0, Math.min(100, meter | 0));
+    hudFill.style.width = `${clamped}%`;
+    hudLabelEl.textContent = label || "Neck and neck";
+    const bar = hud.querySelector(".hud-bar");
+    if (bar) bar.setAttribute("aria-valuenow", String(clamped));
   }
 
   function mapDifficultyToBehavior(diff){
@@ -62,6 +74,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const behavior = mapDifficultyToBehavior(settings?.difficulty || "Normal");
 
+  // === API calls ===
   async function callDebateAPI(message){
     const resp = await fetch("/api/debate", {
       method: "POST",
@@ -69,7 +82,15 @@ document.addEventListener("DOMContentLoaded", () => {
       body: JSON.stringify({
         message,
         difficulty: settings?.difficulty || "Normal",
-        round: currentRound
+        round: currentRound,
+        topic: selectedTopic || null,
+        studentInfo: {
+          firstName: settings.firstName,
+          lastInitial: settings.lastInitial,
+          grade: settings.grade,
+          difficulty: settings.difficulty,
+          topic: selectedTopic || null
+        }
       })
     });
     const data = await resp.json();
@@ -98,70 +119,91 @@ document.addEventListener("DOMContentLoaded", () => {
     return `${claim ? `“${claim}”\n\n` : ""}${bullets}${strategy}`;
   }
 
-  // === POPUP: Return to Welcome ===
+  // === Return to welcome ===
   newAttemptBtn.addEventListener("click", () => {
     localStorage.removeItem(SETTINGS_KEY);
-    window.location.href = "/"; // back to welcome page
+    window.location.href = "/";
   });
 
-  // === WELCOME POPUP ===
-  console.log("👋 Loading debate page... showing welcome popup.");
+  // === Welcome → Topic flow ===
+  studentInput.disabled = true;
+  submitBtn.disabled = true;
+  welcomePopup.classList.remove("hidden");
 
-  if (welcomePopup) {
-    // Always show popup immediately (even if HTML had hidden)
-    welcomePopup.classList.remove("hidden");
+  understoodBtn.addEventListener("click", () => {
+    welcomePopup.classList.add("hidden");
+    topicPopup.classList.remove("hidden");
+  });
 
-    // Lock input until student acknowledges
-    if (studentInput) studentInput.disabled = true;
-    if (submitBtn) submitBtn.disabled = true;
-
-    understoodBtn.addEventListener("click", () => {
-      console.log("✅ Student clicked 'Understood' — enabling debate interface.");
-      welcomePopup.classList.add("hidden");
-      if (studentInput) studentInput.disabled = false;
-      if (submitBtn) submitBtn.disabled = false;
-      studentInput.focus();
+  topicButtons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      topicButtons.forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      selectedTopic = btn.getAttribute("data-topic");
+      confirmTopicBtn.disabled = !selectedTopic;
     });
-  } else {
-    console.warn("⚠️ Welcome popup element not found in DOM.");
-  }
+  });
 
-  // === MAIN BUTTON HANDLER ===
+  confirmTopicBtn.addEventListener("click", () => {
+    if (!selectedTopic) return;
+    const merged = { ...(settings || {}), topic: selectedTopic };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+    settings = merged;
+    topicPopup.classList.add("hidden");
+    studentInput.disabled = false;
+    submitBtn.disabled = false;
+    studentInput.focus();
+    addMessage("AI", `Great! We'll debate: “${selectedTopic}”. Keep arguments school-appropriate and on topic. 👍`);
+  });
+
+  // === Main debate loop ===
   submitBtn.addEventListener("click", async () => {
-    // If already finished 3 rounds -> show final popup
-    if (finishedReady) {
-      showPopup();
-      return;
-    }
+    if (finishedReady) { showPopup(); return; }
 
     const text = (studentInput.value || "").trim();
     if (!text) return;
 
     const words = text.split(/\s+/).filter(Boolean);
     if (words.length > behavior.maxWords) {
-      alert(`Please keep your argument under ${behavior.maxWords} words for ${settings.difficulty || "Normal"}.`);
+      alert(`Please keep your argument under ${behavior.maxWords} words.`);
+      return;
+    }
+    if (!selectedTopic) {
+      topicPopup.classList.remove("hidden");
       return;
     }
 
-    // Prevent extra rounds
-    if (currentRound > MAX_ROUNDS) {
-      showPopup();
-      return;
-    }
-
-    // Thinking visuals
     showBubble(studentThought, `Student: ${text}`);
     showBubble(aiThought, "AI: Thinking…");
     lightBulb.classList.remove("on");
-
     addMessage(settings?.firstName || "Student", text);
     studentInput.value = "";
 
     try {
-      // Get AI reply
       const data = await callDebateAPI(text);
 
-      // Explain (outline)
+      // === Update Win Meter ===
+      if (data.hud) updateHUD(data.hud.meter, data.hud.label);
+
+      // === Sensitive / Off-topic checks ===
+      if (data.violation) {
+        const msg = data.instructions || "Let's keep things school-safe.";
+        showBubble(aiThought, `AI: ${msg}`);
+        addMessage("AI", msg);
+        lightBulb.classList.add("on");
+        setTimeout(() => lightBulb.classList.remove("on"), 600);
+
+        if (data.endDebate) {
+          studentInput.disabled = true;
+          submitBtn.textContent = "Finish Debate";
+          finishedReady = true;
+        }
+        return;
+      }
+
+      sensitiveStrikesThisRound = 0;
+
+      // === Explanation and reply ===
       let outline;
       try {
         outline = await callExplainAPI(text, data.reply);
@@ -178,24 +220,19 @@ document.addEventListener("DOMContentLoaded", () => {
         };
       }
 
-      // Show bubbles + chat
       showBubble(studentThought, outlineToText(outline, text));
       showBubble(aiThought, `AI: ${data.reply}`);
       addMessage("AI", data.reply);
-
-      // Blink bulb
       lightBulb.classList.add("on");
       setTimeout(() => lightBulb.classList.remove("on"), 900);
 
-      // Update round
-      currentRound = data.nextRound || (currentRound + 1);
-      updateRoundDisplay();
-
-      // After 3rd AI reply: disable input and change button text
-      if (currentRound > MAX_ROUNDS) {
+      if (data.endDebate) {
         studentInput.disabled = true;
         submitBtn.textContent = "Finish Debate";
-        finishedReady = true; // next click shows final popup
+        finishedReady = true;
+      } else {
+        currentRound = (data.nextRound || currentRound + 1);
+        updateRoundDisplay();
       }
 
     } catch (err) {
@@ -204,7 +241,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Initial greeting
   updateRoundDisplay();
   addMessage("AI", `Welcome, ${settings.firstName} ${settings.lastInitial}. You chose ${settings.difficulty || "Normal"}.`);
 });

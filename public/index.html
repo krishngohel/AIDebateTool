@@ -19,6 +19,18 @@
       <textarea id="studentInput" placeholder="Enter your argument (max 90 words)..."></textarea>
       <button id="submitBtn">Submit Argument</button>
 
+      <!-- Win Meter HUD -->
+      <div id="hud" class="hud hidden" aria-live="polite">
+        <div class="hud-bar" role="progressbar" aria-label="Who is winning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
+          <div class="hud-fill" id="hudFill" style="width:50%"></div>
+        </div>
+        <div class="hud-legend">
+          <span>Student</span>
+          <span id="hudLabel">Neck and neck</span>
+          <span>AI</span>
+        </div>
+      </div>
+
       <div id="reflection" class="reflection hidden">
         <h3>Reflection</h3>
         <p>Who made the stronger argument?</p>
@@ -51,8 +63,8 @@
     </div>
   </div>
 
-  <!-- Welcome Popup (hidden by default) -->
-  <div id="welcomePopup" class="popup hidden">
+  <!-- Welcome Popup -->
+  <div id="welcomePopup" class="popup">
     <div class="popup-content">
       <h2>Welcome to the AI Debate Tool! 🎉</h2>
       <p style="text-align:left; line-height:1.5;">
@@ -63,6 +75,21 @@
         Once you finish, press <strong>“Finish Debate”</strong> to end.
       </p>
       <button id="understoodBtn">Understood</button>
+    </div>
+  </div>
+
+  <!-- Topic Popup -->
+  <div id="topicPopup" class="popup hidden">
+    <div class="popup-content">
+      <h2>Choose a Debate Topic 🎯</h2>
+      <div class="topics">
+        <button class="topic-btn" data-topic="Homework should be optional">Homework should be optional</button>
+        <button class="topic-btn" data-topic="School should start later">School should start later</button>
+        <button class="topic-btn" data-topic="Video games can help learning">Video games can help learning</button>
+        <button class="topic-btn" data-topic="School uniforms are a good idea">School uniforms are a good idea</button>
+        <button class="topic-btn" data-topic="Zoos are helpful for animals">Zoos are helpful for animals</button>
+      </div>
+      <button id="confirmTopicBtn" disabled>Start Debate</button>
     </div>
   </div>
 
