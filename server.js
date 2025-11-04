@@ -3,12 +3,38 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, 'public');
+const SESSION_DIR = path.join(__dirname, 'data', 'sessions');
+
+// --- Helper to sanitize strings for filenames ---
+function safeName(str) {
+  return str
+    ?.toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 24) || "anon";
+}
+
+// --- Helper to build readable filenames ---
+function makeSessionBase(student, settings) {
+  const date = new Date().toISOString().slice(0, 10); // yyyy-mm-dd
+  const name = safeName(`${student.first_name || "Anon"}${student.last_initial || ""}`);
+  const grade = safeName(student.grade ? `G${student.grade}` : "Gx");
+  const topic = safeName(settings.topic || "Topic");
+  return `${grade}_${name}_${topic}_${date}`;
+}
+
+// Ensure session folder exists
+if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
+
 const sensitiveCounts = new Map();
 const app = express();
 app.use(cors());
@@ -27,9 +53,115 @@ app.get('/debate', (req, res) => {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-/* ------------------------------------------------------------------
-   🔎 ON-TOPIC HELPERS
------------------------------------------------------------------- */
+/* -------------------------- Readability helpers -------------------------- */
+function countSyllables(word) {
+  word = (word || '').toLowerCase().replace(/e\b/, '');
+  const m = word.match(/[aeiouy]{1,2}/g);
+  return m ? m.length : 1;
+}
+function readabilityGrade(text) {
+  const words = (text || '').match(/\b[\w']+\b/g) || [];
+  const sentences = (text || '').split(/[.!?]/).filter(s => s.trim().length > 0);
+  const syllables = words.reduce((a, w) => a + countSyllables(w), 0);
+  if (words.length === 0 || sentences.length === 0) return 0;
+  const grade = 0.39 * (words.length / sentences.length)
+              + 11.8 * (syllables / words.length)
+              - 15.59;
+  return +grade.toFixed(2);
+}
+
+/* ----------------------------- Session APIs ------------------------------ */
+app.post('/api/session/start', (req, res) => {
+  const { first_name, last_initial, grade, difficulty, topic } = req.body || {};
+  const baseName = makeSessionBase({ first_name, last_initial, grade }, { topic });
+  const randomTag = crypto.randomBytes(2).toString('hex');
+  const session_id = `${baseName}_${randomTag}`;
+  const start_ts = new Date().toISOString();
+  const base = path.join(SESSION_DIR, session_id);
+
+  const sessionJson = {
+    session_id,
+    start_ts,
+    student: { first_name, last_initial, grade },
+    settings: { difficulty, topic },
+    turns: []
+  };
+
+  fs.writeFileSync(`${base}.json`, JSON.stringify(sessionJson, null, 2));
+  fs.writeFileSync(
+    `${base}.csv`,
+    'round,student_text,ai_reply_text,student_word_count,readability_grade,hud_meter,hud_leader,latency_ms\n'
+  );
+
+  res.json({ session_id, start_ts });
+});
+
+app.post('/api/session/logTurn', (req, res) => {
+  const {
+    session_id, round,
+    student_text, ai_reply_text,
+    hud_meter, hud_leader,
+    latency_ms
+  } = req.body || {};
+
+  if (!session_id) return res.status(400).json({ error: 'Missing session_id' });
+  const base = path.join(SESSION_DIR, session_id);
+  const jsonPath = `${base}.json`;
+  if (!fs.existsSync(jsonPath)) return res.status(404).json({ error: 'Session not found' });
+
+  const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+  const wc = (student_text?.match(/\b[\w']+\b/g) || []).length;
+  const grade = readabilityGrade(student_text || '');
+
+  const turn = {
+    round,
+    student_text,
+    ai_reply_text,
+    student_word_count: wc,
+    readability_grade: grade,
+    hud_meter,
+    hud_leader,
+    latency_ms
+  };
+  data.turns.push(turn);
+  fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
+
+  const line = `${round},"${(student_text||'').replace(/"/g, '""')}","${(ai_reply_text||'').replace(/"/g, '""')}",${wc},${grade},${hud_meter},${hud_leader},${latency_ms}\n`;
+  fs.appendFileSync(`${base}.csv`, line);
+
+  res.json({ ok: true });
+});
+
+app.post('/api/session/finish', (req, res) => {
+  const { session_id, winner_final, violations_total = 0, hud_avg = null, hud_last = null } = req.body || {};
+  if (!session_id) return res.status(400).json({ error: 'Missing session_id' });
+
+  const base = path.join(SESSION_DIR, session_id);
+  const jsonPath = `${base}.json`;
+  if (!fs.existsSync(jsonPath)) return res.status(404).json({ error: 'Session not found' });
+
+  const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+  data.end_ts = new Date().toISOString();
+
+  const grades = data.turns.map(t => t.readability_grade).filter(n => typeof n === 'number');
+  const avgGrade = grades.length ? +(grades.reduce((a, b) => a + b, 0) / grades.length).toFixed(2) : 0;
+
+  data.summary = {
+    rounds_played: data.turns.length,
+    winner_final,
+    avg_hud_meter: hud_avg,
+    last_hud_meter: hud_last,
+    violations_total,
+    readability_avg_grade: avgGrade
+  };
+
+  fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
+  fs.appendFileSync(`${base}.csv`, `\nSummary,,,,avg_readability,avg_hud,last_hud,winner\n,,,,${avgGrade},${hud_avg ?? ''},${hud_last ?? ''},${winner_final || ''}\n`);
+
+  res.json({ ok: true });
+});
+
+/* --------------------------- ON-TOPIC CHECKERS --------------------------- */
 const TOPIC_KEYWORDS = {
   "Homework should be optional": [
     "homework","assignment","study","after school","optional","practice",
@@ -57,7 +189,7 @@ const TOPIC_KEYWORDS = {
 const SCHOOL_CONTEXT_REGEX = /\b(school|class|teacher|homework|assignment|study|learn|test|grade|bus|bell|period|recess|after school|principal|student|locker|cafeteria)\b/i;
 function keywordMatch(topic, text) {
   const list = TOPIC_KEYWORDS[topic] || [];
-  const lower = text.toLowerCase();
+  const lower = (text || '').toLowerCase();
   return list.some(k => lower.includes(k));
 }
 async function semanticOnTopicCheck(openai, topic, message) {
@@ -67,8 +199,7 @@ async function semanticOnTopicCheck(openai, topic, message) {
       input: `You are a strict classifier for middle-school debates.
 Topic: "${topic}"
 Message: "${message}"
-Decide if the message is relevant to the topic, even if it uses indirect school-related reasons
-(e.g., being tired after 8 hours of school is relevant to homework being optional).
+Decide if the message is relevant to the topic, even if it uses indirect school-related reasons.
 Answer ONLY JSON: {"on_topic": true|false}`
     });
     const txt = (resp.output_text || "").trim();
@@ -76,13 +207,11 @@ Answer ONLY JSON: {"on_topic": true|false}`
     const json = JSON.parse(txt.slice(s, e+1));
     return !!json.on_topic;
   } catch {
-    return true; // lenient fallback
+    return true;
   }
 }
 
-/* ------------------------------------------------------------------
-   🎯 DEBATE ENDPOINT
------------------------------------------------------------------- */
+/* ------------------------------ Debate API ------------------------------- */
 app.post('/api/debate', async (req, res) => {
   try {
     const { message, difficulty = "Normal", round = 1, topic = null, studentInfo = {} } = req.body;
@@ -90,21 +219,14 @@ app.post('/api/debate', async (req, res) => {
 
     const studentKey = `${studentInfo.firstName || "unknown"}_${studentInfo.lastInitial || ""}`;
 
-    // --- Hard regex filter (explicit content etc.) ---
+    // --- Moderation ---
     const badRegex = /\b(sex|porn|jerk|masturbat|nude|onlyfans|xxx|fuck|shit|biden|trump|democrat|republican|muslim|christian|hindu|atheist|jew|bible|quran|torah|church|mosque|synagogue)\b/i;
     const hasBad = badRegex.test(message);
-
-    // --- OpenAI Moderation check ---
     let modFlagged = false;
     try {
-      const mod = await openai.moderations.create({
-        model: "omni-moderation-latest",
-        input: message
-      });
+      const mod = await openai.moderations.create({ model: "omni-moderation-latest", input: message });
       modFlagged = mod.results?.[0]?.flagged || false;
-    } catch (e) {
-      console.warn("Moderation check failed:", e.message);
-    }
+    } catch (e) { console.warn("Moderation check failed:", e.message); }
 
     const flagged = hasBad || modFlagged;
     const currentCount = sensitiveCounts.get(studentKey) || 0;
@@ -112,99 +234,54 @@ app.post('/api/debate', async (req, res) => {
       const newCount = currentCount + 1;
       sensitiveCounts.set(studentKey, newCount);
       if (newCount >= 2) {
-        return res.json({
-          violation: true, category: "sensitive", endDebate: true,
-          allowRetry: false,
-          instructions: "We have to stop the debate now to keep things school-appropriate."
-        });
+        return res.json({ violation: true, category: "sensitive", endDebate: true,
+          allowRetry: false, instructions: "We have to stop the debate now to keep things school-appropriate." });
       } else {
-        return res.json({
-          violation: true, category: "sensitive",
-          allowRetry: true,
-          instructions: "Please avoid adult, political, or religious content. Let's keep the discussion school-safe."
-        });
+        return res.json({ violation: true, category: "sensitive", allowRetry: true,
+          instructions: "Please avoid adult, political, or religious content. Let's keep the discussion school-safe." });
       }
     }
     if (currentCount > 0 && !flagged) sensitiveCounts.set(studentKey, 0);
 
-    /* ---------------- ON-TOPIC CHECK ---------------- */
+    // --- On-topic ---
     let onTopic = true;
     if (topic) {
-      if (round === 1) {
-        onTopic = keywordMatch(topic, message);
-      } else {
+      if (round === 1) onTopic = keywordMatch(topic, message);
+      else {
         onTopic = keywordMatch(topic, message) || SCHOOL_CONTEXT_REGEX.test(message);
         if (!onTopic) onTopic = await semanticOnTopicCheck(openai, topic, message);
       }
     }
     if (!onTopic) {
-      return res.json({
-        violation: true,
-        category: "offtopic",
-        allowRetry: true,
-        instructions: `Let's stay on “${topic}”. You can mention related ideas like being tired, stress, time at home, or practice—those still count as on-topic. Try again!`
-      });
+      return res.json({ violation: true, category: "offtopic", allowRetry: true,
+        instructions: `Let's stay on “${topic}”. Try mentioning the topic directly or related ideas like stress or practice.` });
     }
 
-    /* ---------------- DIFFICULTY PROFILES ---------------- */
+    // --- Difficulty profiles ---
     const profiles = {
       Beginner: {
-        style: `
-You are an encouraging and friendly teacher.
-Give ONE short, kind counterpoint using simple language and real-world examples.
-If the student's idea makes sense, openly AGREE or PRAISE it ("Great point!", "I see your reasoning!").
-Avoid using strong disagreement more than once. End positively and thank the student.`,
+        style: `You are a friendly teacher. Give one short, kind counterpoint using simple words.`,
         bias: 0.20
       },
-      Intermediate: {
-        style: `
-You are a supportive and polite coach.
-Give ONE or TWO gentle counterpoints, but acknowledge the student's reasoning.
-Find common ground when reasonable; encourage and praise effort.`,
-        bias: 0.30
-      },
-      Normal: {
-        style: `
-You are a balanced and fair peer in a classroom debate.
-Provide one clear counterpoint with a short example.
-Agree with strong reasoning; disagree politely if needed. Neutral closing tone.`,
-        bias: 0.50
-      },
-      Hard: {
-        style: `
-You are a thoughtful and logical debater.
-Give TWO detailed counterpoints with facts or reasoning.
-Challenge weak logic directly but politely. Rarely concede.`,
-        bias: 0.65
-      },
-      Extreme: {
-        style: `
-You are a rigorous debate expert.
-Provide multiple logical arguments with evidence and examples.
-Challenge assumptions; do not concede unless the student's argument is exceptional.`,
-        bias: 0.80
-      }
+      Intermediate: { style: `You are a polite coach. Give gentle counterpoints, praise effort.`, bias: 0.30 },
+      Normal: { style: `You are a balanced peer. Provide one clear counterpoint politely.`, bias: 0.50 },
+      Hard: { style: `You are logical. Give two counterpoints with reasoning.`, bias: 0.65 },
+      Extreme: { style: `You are an expert debater. Use logic and evidence; challenge weak ideas.`, bias: 0.80 }
     };
     const profile = profiles[difficulty] || profiles.Normal;
 
-    /* ---------------- PROMPT ---------------- */
     const politeRules = `
-General rules (always):
-- Be kind, respectful, and age-appropriate.
-- Keep sentences under 120 words.
-- Do NOT end or summarize the debate early.
-- Stay strictly on the chosen topic: ${topic || "student's topic"}.
-- Encourage curiosity and reflection.`;
+General rules:
+- Be respectful and age-appropriate.
+- Keep replies under 120 words.
+- Stay on the chosen topic: ${topic}.
+- Encourage reflection and curiosity.`;
 
     const prompt = `
 ${politeRules}
 You are in Round ${round} of 3.
-Match this behavior for difficulty "${difficulty}":
+Difficulty: ${difficulty}
 ${profile.style}
-Your goals:
-1) Reply with a short, polite argument ON the chosen topic only.
-2) Adjust tone to difficulty: easier = agree/praise more; harder = challenge more.
-3) Never end the debate early or declare a winner.
 Output ONLY JSON:
 {"reply":"string","stance":"agree"|"disagree"|"mixed","outcome":"student"|"ai"|"mixed","score":number}
 Student said:"""${message}"""`;
@@ -216,19 +293,15 @@ Student said:"""${message}"""`;
       const s = out.indexOf("{"); const e = out.lastIndexOf("}");
       data = JSON.parse(out.slice(s, e + 1));
     } catch {
-      data = {
-        reply: "That's an interesting point—here's one idea that connects to our topic.",
-        stance: "mixed", outcome: "mixed", score: profile.bias
-      };
+      data = { reply: "That's an interesting point!", stance: "mixed", outcome: "mixed", score: profile.bias };
     }
 
-    /* ---------------- SCORE ADJUSTMENTS ---------------- */
+    // --- Scoring ---
     const clamp = (x,a=0,b=1)=>Math.max(a,Math.min(b,x));
     let score = typeof data.score==="number"?clamp(data.score):profile.bias;
     const mix=(a,b,t)=>a*(1-t)+b*t;
     const dampByDiff={Beginner:0.25,Intermediate:0.35,Normal:0.5,Hard:0.65,Extreme:0.75};
     score = mix(score, profile.bias, dampByDiff[difficulty] ?? 0.5);
-
     if (difficulty==="Beginner"){score=Math.min(score,0.42);score=clamp(score-0.10,0,1);}
     else if (difficulty==="Intermediate"){score=Math.min(score,0.48);score=clamp(score-0.05,0,1);}
     else if (difficulty==="Hard"){score=Math.max(score,0.55);}
@@ -237,7 +310,7 @@ Student said:"""${message}"""`;
 
     if ((difficulty==="Beginner"||difficulty==="Intermediate") && Math.random()<0.6){
       data.outcome="student";
-      if (data.reply && !/great|good|nice|smart|love|agree/i.test(data.reply))
+      if (data.reply && !/great|good|nice|smart|agree/i.test(data.reply))
         data.reply += " That’s a great way to think about it—thanks for sharing!";
     } else {
       if (score>0.53) data.outcome="ai";
@@ -245,9 +318,6 @@ Student said:"""${message}"""`;
       else data.outcome="mixed";
     }
 
-    data.score=score;
-
-    /* ---------------- HUD INFO ---------------- */
     const meter=Math.round(score*100);
     let leader="tied";
     if (meter>53) leader="ai";
@@ -261,7 +331,7 @@ Student said:"""${message}"""`;
     data.round=round;
     data.nextRound=round+1;
     data.endDebate=data.nextRound>3;
-    if (!data.reply) data.reply="Thanks! I see your point—here’s one idea to consider on this topic.";
+    if (!data.reply) data.reply="Thanks! I see your point.";
     data.hud={meter,leader,label,difficulty};
 
     res.json(data);
@@ -271,9 +341,7 @@ Student said:"""${message}"""`;
   }
 });
 
-/* ------------------------------------------------------------------
-   💬 EXPLAIN ENDPOINT
------------------------------------------------------------------- */
+/* ------------------------------ Explain API ------------------------------ */
 app.post('/api/explain', async (req, res) => {
   try {
     const { student, reply } = req.body;
@@ -284,7 +352,7 @@ app.post('/api/explain', async (req, res) => {
 Explain briefly how the AI formed its reply.
 3–5 bullets, ≤14 words each, 1 emoji per bullet.
 Output ONLY JSON:
-{"extracted_claim":"string","stance":"agree"|"disagree"|"mixed","strategy":"string","steps":["point1","point2","point3"]}
+{"extracted_claim":"string","stance":"agree"|"disagree"|"mixed","strategy":"string","steps":["p1","p2","p3"]}
 Student:"""${student}"""
 AI Reply:"""${reply}"""`;
 
@@ -298,12 +366,12 @@ AI Reply:"""${reply}"""`;
       json = {
         extracted_claim: student.slice(0, 140),
         stance: "mixed",
-        strategy: "give a polite counterpoint and reflection",
-        steps: ["🔍 Find the main idea","🎯 Give one counterpoint","🧩 Add an example","🤝 Suggest compromise"]
+        strategy: "give a polite counterpoint",
+        steps: ["🔍 Find idea","🎯 Give counterpoint","🧩 Add example","🤝 Suggest compromise"]
       };
     }
     if (!Array.isArray(json.steps) || !json.steps.length)
-      json.steps = ["🔍 Find the main idea","🎯 Give one counterpoint","🧩 Add an example","🤝 Suggest compromise"];
+      json.steps = ["🔍 Find idea","🎯 Give counterpoint","🧩 Add example","🤝 Suggest compromise"];
     res.json(json);
   } catch (err) {
     console.error(err);
@@ -311,8 +379,6 @@ AI Reply:"""${reply}"""`;
   }
 });
 
-/* ------------------------------------------------------------------
-   🚀 START SERVER
------------------------------------------------------------------- */
+/* ------------------------------- Start server ---------------------------- */
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Server running → http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running → http://localhost:${PORT}`));
