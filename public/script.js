@@ -1,6 +1,4 @@
-// script.js – welcome popup → topic popup → debate (3 rounds)
-// + safe filters + win meter + dynamic reasoning + finish popup
-// + session start/log/finish with per-session CSV/JSON files
+// script.js – relaxed on-topic + log every turn (ok/violation)
 document.addEventListener("DOMContentLoaded", () => {
   const SETTINGS_KEY = "debate_user_settings_v1";
   let settings = null;
@@ -29,22 +27,23 @@ document.addEventListener("DOMContentLoaded", () => {
   const hudFill    = document.getElementById("hudFill");
   const hudLabelEl = document.getElementById("hudLabel");
 
+  // Session
+  let sessionId = null;
+
   // State
   let currentRound = 1;
   const MAX_ROUNDS = 3;
   let finishedReady = false;
   let selectedTopic = settings?.topic || null;
   let lastHUD = { meter: 50, leader: "tied", label: "Neck and neck" };
-  let sessionId = null;
-  let violationsTotal = 0;
 
-  // ---------- Helpers ----------
+  // Helpers
   const safe = (el, cb) => { if (el) cb(el); };
+  const now = () => performance.now();
 
   function updateRoundDisplay() {
     safe(roundTracker, el => el.textContent = `Round ${currentRound} of ${MAX_ROUNDS}`);
   }
-
   function addMessage(sender, text) {
     if (!chatBox) return;
     const div = document.createElement("div");
@@ -53,38 +52,20 @@ document.addEventListener("DOMContentLoaded", () => {
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
   }
-
   function showBubble(el, text) {
     if (!el) return;
     el.textContent = text;
     el.classList.add("show");
   }
-
-  function mapDifficultyToBehavior(diff){
-    switch (diff) {
-      case "Beginner":     return { maxWords: 90 };
-      case "Intermediate": return { maxWords: 90 };
-      case "Normal":       return { maxWords: 90 };
-      case "Hard":         return { maxWords:110 };
-      case "Extreme":      return { maxWords:130 };
-      default:             return { maxWords: 90 };
-    }
-  }
-  const behavior = mapDifficultyToBehavior(settings?.difficulty || "Normal");
-
-  // HUD
-  function updateHUD(meter, label) {
+  function updateHUD(meter=50, label="Neck and neck") {
     if (!hud || !hudFill || !hudLabelEl) return;
     hud.classList.remove("hidden");
-    const clamped = Math.max(0, Math.min(100, meter ?? 50));
+    const clamped = Math.max(0, Math.min(100, meter));
     hudFill.style.width = `${clamped}%`;
-    hudLabelEl.textContent = label || "Neck and neck";
-    const bar = hud.querySelector(".hud-bar");
-    if (bar) bar.setAttribute("aria-valuenow", String(clamped));
+    hudLabelEl.textContent = label;
   }
   updateHUD(50, "Neck and neck");
 
-  // Dynamic reasoning per round
   function makeLeadReasoning(round, hudObj, stance, topic) {
     const who = hudObj?.leader || "tied";
     const t = topic ? ` on “${topic}”` : "";
@@ -112,9 +93,48 @@ document.addEventListener("DOMContentLoaded", () => {
     return bank.tied;
   }
 
-  // ---------- API wrappers ----------
+  // API
+  async function startSession() {
+    const resp = await fetch("/api/session/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        first_name: settings.firstName,
+        last_initial: settings.lastInitial,
+        grade: settings.grade,
+        difficulty: settings.difficulty,
+        topic: selectedTopic
+      })
+    });
+    const data = await resp.json();
+    sessionId = data.session_id;
+  }
+
+  async function logTurn(payload) {
+    if (!sessionId) return;
+    await fetch("/api/session/logTurn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, ...payload })
+    });
+  }
+
+  async function finishSession(finalHud, violationsTotal=0) {
+    if (!sessionId) return;
+    await fetch("/api/session/finish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        winner_final: finalHud?.leader || "tied",
+        hud_avg: null,
+        hud_last: finalHud?.meter ?? null,
+        violations_total: violationsTotal
+      })
+    });
+  }
+
   async function callDebateAPI(message){
-    const t0 = performance.now();
     const resp = await fetch("/api/debate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -134,7 +154,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data?.error || "API error");
-    data._latency_ms = Math.round(performance.now() - t0);
     return data;
   }
 
@@ -149,76 +168,64 @@ document.addEventListener("DOMContentLoaded", () => {
     return data;
   }
 
-  // Session logging APIs
-  async function startSession() {
-    const payload = {
-      first_name: settings.firstName,
-      last_initial: settings.lastInitial,
-      grade: settings.grade,
-      difficulty: settings.difficulty,
-      topic: selectedTopic
-    };
-    const r = await fetch('/api/session/start', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.error || 'Failed to start session');
-    sessionId = j.session_id;
+  function outlineToText(outline, fallbackClaim) {
+    const claim = outline?.extracted_claim || fallbackClaim || "";
+    const steps = Array.isArray(outline?.steps) ? outline.steps.slice(0, 4) : [];
+    const strategy = outline?.strategy ? `\n\nStrategy: ${outline.strategy}` : "";
+    const bullets = steps.length
+      ? steps.map(s => `• ${s}`).join("\n")
+      : "• 🔍 Identify main idea\n• 🎯 Give one reason\n• 🧩 Add example\n• 🤝 Suggest compromise";
+    return `${claim ? `“${claim}”\n\n` : ""}${bullets}${strategy}`;
   }
 
-  async function logTurn({ round, student_text, ai_reply_text, hud_meter, hud_leader, latency_ms }) {
-    if (!sessionId) return; // if missing, skip silently
-    await fetch('/api/session/logTurn', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        session_id: sessionId,
-        round, student_text, ai_reply_text,
-        hud_meter, hud_leader, latency_ms
-      })
-    });
-  }
+  // UI flow
+  safe(finishPopup, el => el.classList.add("hidden"));
+  safe(topicPopup,  el => el.classList.add("hidden"));
+  safe(welcomePopup, el => el.classList.remove("hidden"));
 
-  async function finishSession(finalLeader) {
-    if (!sessionId) return;
-    const allMeters = document.querySelector('.hud-bar') ? [] : []; // placeholder if you later track locally
-    const payload = {
-      session_id: sessionId,
-      winner_final: finalLeader || 'tied',
-      violations_total: violationsTotal,
-      hud_avg: null,  // could compute client-side if you store history
-      hud_last: lastHUD?.meter ?? null
-    };
-    await fetch('/api/session/finish', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-  }
+  studentInput.disabled = true;
+  submitBtn.disabled = true;
 
-  // ---------- Result Popup ----------
+  understoodBtn.addEventListener("click", () => {
+    welcomePopup.classList.add("hidden");
+    topicPopup.classList.remove("hidden");
+    confirmTopicBtn.disabled = true;
+  });
+
+  topicButtons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      topicButtons.forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      selectedTopic = btn.getAttribute("data-topic");
+      confirmTopicBtn.disabled = !selectedTopic;
+    });
+  });
+
+  confirmTopicBtn.addEventListener("click", async () => {
+    if (!selectedTopic) return;
+    const merged = { ...(settings || {}), topic: selectedTopic };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+    settings = merged;
+    topicPopup.classList.add("hidden");
+    studentInput.disabled = false;
+    submitBtn.disabled = false;
+    studentInput.focus();
+    addMessage("AI", `Great! We'll debate: “${selectedTopic}”. Keep arguments school-appropriate and on topic. 👍`);
+    await startSession();
+  });
+
   function showResultPopup(hudObj) {
     if (!finishPopup) return;
     finishPopup.classList.remove("hidden");
-
     const popupTitle = finishPopup.querySelector(".popup-title");
     const popupMsg   = finishPopup.querySelector(".popup-message");
     const winner     = hudObj?.leader || "tied";
     let title = "", msg = "";
-
-    if (winner === "student") {
-      title = "🎉 You Won!";
-      msg   = "Excellent job! Your arguments were strong, clear, and persuasive.";
-    } else if (winner === "ai") {
-      title = "🤖 The AI Won This Time!";
-      msg   = "Great effort! Your ideas were thoughtful. Keep practicing your reasoning!";
-    } else {
-      title = "🤝 It’s a Tie!";
-      msg   = "Both sides made solid points and stayed on topic. Nice work!";
-    }
-
+    if (winner === "student") { title = "🎉 You Won!"; msg = "Excellent job! Your arguments were strong, clear, and persuasive."; }
+    else if (winner === "ai") { title = "🤖 The AI Won This Time!"; msg = "Great effort! Your ideas were thoughtful. Keep practicing your reasoning!"; }
+    else { title = "🤝 It’s a Tie!"; msg = "Both sides made solid points and stayed on topic. Nice work!"; }
     if (popupTitle) popupTitle.textContent = title;
     if (popupMsg)   popupMsg.textContent   = msg;
-
     const anyBtn = finishPopup.querySelector("button");
     if (anyBtn) {
       anyBtn.textContent = "Back to Welcome";
@@ -229,93 +236,49 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // ---------- Initial popups ----------
-  if (finishPopup) finishPopup.classList.add("hidden");
-  if (topicPopup)  topicPopup.classList.add("hidden");
-  if (welcomePopup) welcomePopup.classList.remove("hidden");
-
-  studentInput.disabled = true;
-  submitBtn.disabled = true;
-
-  // Welcome → Topic
-  if (understoodBtn) {
-    understoodBtn.addEventListener("click", () => {
-      welcomePopup.classList.add("hidden");
-      topicPopup.classList.remove("hidden");
-      if (confirmTopicBtn) confirmTopicBtn.disabled = true;
-    });
-  }
-
-  topicButtons.forEach(btn => {
-    btn.addEventListener("click", () => {
-      topicButtons.forEach(b => b.classList.remove("selected"));
-      btn.classList.add("selected");
-      selectedTopic = btn.getAttribute("data-topic");
-      if (confirmTopicBtn) confirmTopicBtn.disabled = !selectedTopic;
-    });
-  });
-
-  if (confirmTopicBtn) {
-    confirmTopicBtn.addEventListener("click", async () => {
-      if (!selectedTopic) return;
-      const merged = { ...(settings || {}), topic: selectedTopic };
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
-      settings = merged;
-
-      topicPopup.classList.add("hidden");
-      studentInput.disabled = false;
-      submitBtn.disabled = false;
-      studentInput.focus();
-      addMessage("AI", `Great! We'll debate: “${selectedTopic}”. Keep arguments school-appropriate and on topic. 👍`);
-
-      // Start session on topic confirmation
-      try { await startSession(); }
-      catch (e) { console.warn('Session start failed:', e?.message); }
-    });
-  }
-
-  // ---------- Main Debate Flow ----------
   submitBtn.addEventListener("click", async () => {
-    // If already finished, clicking shows the result & finalizes session
-    if (finishedReady) {
-      try { await finishSession(lastHUD?.leader || 'tied'); } catch {}
-      showResultPopup(lastHUD);
-      return;
-    }
+    if (finishedReady) { showResultPopup(lastHUD); return; }
 
     const text = (studentInput.value || "").trim();
     if (!text) return;
+    if (!selectedTopic) { topicPopup.classList.remove("hidden"); return; }
 
-    if (!selectedTopic) {
-      topicPopup.classList.remove("hidden");
-      return;
-    }
-
-    const words = text.split(/\s+/).filter(Boolean);
-    if (words.length > behavior.maxWords) {
-      alert(`Please keep your argument under ${behavior.maxWords} words.`);
-      return;
-    }
-
-    // Thinking UI
+    // visual thinking
     showBubble(studentThought, `Student: ${text}`);
     showBubble(aiThought, "AI: Thinking…");
     lightBulb.classList.remove("on");
     addMessage(settings?.firstName || "Student", text);
     studentInput.value = "";
 
+    const t0 = now();
     try {
       const data = await callDebateAPI(text);
+      const latency = Math.round(now() - t0);
 
-      // Violations (sensitive/off-topic)
+      // Soft hint (no violation)
+      if (data.hint) {
+        addMessage("AI", data.hint);
+      }
+
+      // If moderation violation
       if (data.violation) {
-        violationsTotal += 1;
-        const msg = data.instructions || "Let's stay appropriate and on topic.";
+        const msg = data.instructions || "Let's keep this discussion school-safe.";
         addMessage("AI", msg);
         showBubble(aiThought, `AI: ${msg}`);
-        if (data.hud) { updateHUD(data.hud.meter, data.hud.label); lastHUD = data.hud; }
+
+        await logTurn({
+          round: currentRound,
+          student_text: text,
+          ai_reply_text: msg,
+          hud_meter: data.hud?.meter ?? "",
+          hud_leader: data.hud?.leader ?? "",
+          latency_ms: latency,
+          status: "violation",
+          category: data.category || "sensitive"
+        });
 
         if (data.endDebate) {
+          await finishSession(lastHUD);
           studentInput.disabled = true;
           submitBtn.textContent = "Finish Debate";
           finishedReady = true;
@@ -323,42 +286,40 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      // AI reply → chat
+      // Normal reply
       addMessage("AI", data.reply);
+      if (data.hud) {
+        updateHUD(data.hud.meter, data.hud.label);
+        lastHUD = data.hud;
+      }
 
-      // Update HUD after AI reply
-      if (data.hud) { updateHUD(data.hud.meter, data.hud.label); lastHUD = data.hud; }
-
-      // Thought bubble shows round-aware lead reasoning
+      // Thought bubbles
       const reasoning = makeLeadReasoning(currentRound, data.hud, data.stance, selectedTopic);
       showBubble(aiThought, reasoning);
 
-      // Student bubble: outline
       try {
         const outline = await callExplainAPI(text, data.reply);
         showBubble(studentThought, outlineToText(outline, text));
       } catch {}
 
-      // Log this turn to the session file
-      try {
-        await logTurn({
-          round: currentRound,
-          student_text: text,
-          ai_reply_text: data.reply,
-          hud_meter: data?.hud?.meter ?? null,
-          hud_leader: data?.hud?.leader ?? null,
-          latency_ms: data?._latency_ms ?? null
-        });
-      } catch (e) {
-        console.warn('logTurn failed:', e?.message);
-      }
-
-      // Blink bulb
       lightBulb.classList.add("on");
       setTimeout(() => lightBulb.classList.remove("on"), 900);
 
+      // Log successful turn
+      await logTurn({
+        round: currentRound,
+        student_text: text,
+        ai_reply_text: data.reply,
+        hud_meter: data.hud?.meter ?? "",
+        hud_leader: data.hud?.leader ?? "",
+        latency_ms: latency,
+        status: "ok",
+        category: ""
+      });
+
       // Rounds
       if (data.endDebate) {
+        await finishSession(data.hud);
         studentInput.disabled = true;
         submitBtn.textContent = "Finish Debate";
         finishedReady = true;
@@ -366,14 +327,12 @@ document.addEventListener("DOMContentLoaded", () => {
         currentRound = data.nextRound || currentRound + 1;
         updateRoundDisplay();
       }
-
     } catch (err) {
       addMessage("AI", err.message || "Network error — please try again.");
       showBubble(aiThought, "AI: (error) Please try again.");
     }
   });
 
-  // Greeting
   updateRoundDisplay();
   addMessage("AI", `Welcome, ${settings.firstName} ${settings.lastInitial}. You chose ${settings.difficulty || "Normal"}.`);
 });

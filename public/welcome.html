@@ -28,11 +28,23 @@
         </div>
 
         <div class="field-row">
-          <label for="grade">Grade</label>
-          <select id="grade" required>
-            <option value="" disabled selected>Select grade</option>
-            <option>6</option><option>7</option><option>8</option>
+          <label for="gradeSelect">Grade</label>
+          <select id="gradeSelect" required>
+            <option value="">Select grade</option>
+            <option value="6">6th Grade</option>
+            <option value="7">7th Grade</option>
+            <option value="8">8th Grade</option>
+            <option value="Other">Other (type below)</option>
           </select>
+
+          <!-- Shown only if "Other" is selected -->
+          <input
+            id="gradeCustom"
+            class="hidden"
+            type="text"
+            maxlength="32"
+            placeholder="e.g., 5th Grade, College Sophomore, Adult Learner, Graduated"
+          />
         </div>
 
         <div class="field-row">
@@ -53,19 +65,50 @@
   // Save to localStorage, then let the form navigate to /debate
   document.addEventListener("DOMContentLoaded", () => {
     const SETTINGS_KEY = "debate_user_settings_v1";
-    const form = document.getElementById("welcomeForm");
-    document.getElementById("startBtn")?.addEventListener("click", () => form.requestSubmit());
+    const form        = document.getElementById("welcomeForm");
+    const startBtn    = document.getElementById("startBtn");
+    const firstName   = document.getElementById("firstName");
+    const lastInitial = document.getElementById("lastInitial");
+    const gradeSelect = document.getElementById("gradeSelect");
+    const gradeCustom = document.getElementById("gradeCustom");
+    const difficulty  = document.getElementById("difficulty");
 
-    form.addEventListener("submit", () => {
-      const firstName   = (document.getElementById("firstName")?.value || "").trim();
-      const lastInitial = (document.getElementById("lastInitial")?.value || "").trim().slice(0,1).toUpperCase();
-      const grade       = document.getElementById("grade")?.value || "";
-      const difficulty  = document.getElementById("difficulty")?.value || "";
-      if (!firstName || !lastInitial || !grade || !difficulty) return;
+    // Toggle custom grade input
+    gradeSelect.addEventListener("change", () => {
+      const needsCustom = gradeSelect.value === "Other";
+      gradeCustom.classList.toggle("hidden", !needsCustom);
+      gradeCustom.required = needsCustom;
+      if (!needsCustom) gradeCustom.value = "";
+    });
+
+    function getSelectedGrade() {
+      const val = gradeSelect.value;
+      if (val === "Other") {
+        return gradeCustom.value.trim() || "Other";
+      }
+      return val; // "6" | "7" | "8"
+    }
+
+    startBtn?.addEventListener("click", () => form.requestSubmit());
+
+    form.addEventListener("submit", (e) => {
+      // Let the browser handle required fields; if any missing, it will prevent navigation
+      const fName = (firstName?.value || "").trim();
+      const lInit = (lastInitial?.value || "").trim().slice(0,1).toUpperCase();
+      const grd   = getSelectedGrade();
+      const diff  = (difficulty?.value || "").trim();
+
+      if (!fName || !lInit || !grd || !diff) return; // let browser validation show issues
 
       localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-        firstName, lastInitial, grade, difficulty, ts: Date.now()
+        firstName: fName,
+        lastInitial: lInit,
+        grade: grd,
+        difficulty: diff,
+        topic: null,
+        ts: Date.now()
       }));
+      // Navigation will proceed to /debate because of form action
     });
   });
   </script>

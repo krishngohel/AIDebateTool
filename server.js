@@ -27,9 +27,19 @@ function safeName(str) {
 function makeSessionBase(student, settings) {
   const date = new Date().toISOString().slice(0, 10); // yyyy-mm-dd
   const name = safeName(`${student.first_name || "Anon"}${student.last_initial || ""}`);
-  const grade = safeName(student.grade ? `G${student.grade}` : "Gx");
-  const topic = safeName(settings.topic || "Topic");
-  return `${grade}_${name}_${topic}_${date}`;
+
+  // Accept "6","7","8" OR any custom text (e.g., "College Sophomore", "Graduated")
+  const raw = (student.grade ?? "X").toString().trim();
+  let gradeLabel;
+  if (["6", "7", "8"].includes(raw)) {
+    gradeLabel = `G${raw}`;
+  } else {
+    // Free text label for "Other" inputs; sanitize for filenames
+    gradeLabel = safeName(raw.length ? raw : "Other");
+  }
+
+  const topic = safeName((settings.topic || "Topic").toString());
+  return `${gradeLabel}_${name}_${topic}_${date}`;
 }
 
 // Ensure session folder exists
@@ -90,7 +100,7 @@ app.post('/api/session/start', (req, res) => {
   fs.writeFileSync(`${base}.json`, JSON.stringify(sessionJson, null, 2));
   fs.writeFileSync(
     `${base}.csv`,
-    'round,student_text,ai_reply_text,student_word_count,readability_grade,hud_meter,hud_leader,latency_ms\n'
+    'round,student_text,ai_reply_text,student_word_count,readability_grade,hud_meter,hud_leader,latency_ms,status,category\n'
   );
 
   res.json({ session_id, start_ts });
@@ -101,7 +111,9 @@ app.post('/api/session/logTurn', (req, res) => {
     session_id, round,
     student_text, ai_reply_text,
     hud_meter, hud_leader,
-    latency_ms
+    latency_ms,
+    status = "ok",
+    category = ""
   } = req.body || {};
 
   if (!session_id) return res.status(400).json({ error: 'Missing session_id' });
@@ -121,12 +133,16 @@ app.post('/api/session/logTurn', (req, res) => {
     readability_grade: grade,
     hud_meter,
     hud_leader,
-    latency_ms
+    latency_ms,
+    status,
+    category
   };
   data.turns.push(turn);
   fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
 
-  const line = `${round},"${(student_text||'').replace(/"/g, '""')}","${(ai_reply_text||'').replace(/"/g, '""')}",${wc},${grade},${hud_meter},${hud_leader},${latency_ms}\n`;
+  const esc = (s='') => s.replace(/"/g, '""');
+  const line =
+    `${round},"${esc(student_text)}","${esc(ai_reply_text)}",${wc},${grade},${hud_meter ?? ''},${hud_leader ?? ''},${latency_ms ?? ''},${status},${category}\n`;
   fs.appendFileSync(`${base}.csv`, line);
 
   res.json({ ok: true });
@@ -156,62 +172,45 @@ app.post('/api/session/finish', (req, res) => {
   };
 
   fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2));
-  fs.appendFileSync(`${base}.csv`, `\nSummary,,,,avg_readability,avg_hud,last_hud,winner\n,,,,${avgGrade},${hud_avg ?? ''},${hud_last ?? ''},${winner_final || ''}\n`);
+  fs.appendFileSync(
+    `${base}.csv`,
+    `\nSummary,,,,avg_readability,avg_hud,last_hud,winner\n,,,,${avgGrade},${hud_avg ?? ''},${hud_last ?? ''},${winner_final || ''}\n`
+  );
 
   res.json({ ok: true });
 });
 
-/* --------------------------- ON-TOPIC CHECKERS --------------------------- */
+/* --------------------------- Soft on-topic helpers ----------------------- */
 const TOPIC_KEYWORDS = {
+  "Video games can help learning": [
+    "video game","gaming","game","learn","learning","educational","practice","skills",
+    "strategy","puzzle","problem solving","memory","hand eye coordination","minecraft","fortnite","roblox"
+  ],
   "Homework should be optional": [
-    "homework","assignment","study","after school","optional","practice",
-    "workload","busywork","stress","stressed","stressful","tired","drained",
-    "burned out","burnt out","exhausted","overwhelmed","relax","free time",
-    "time at home","too much work","take home work","worksheet","due"
+    "homework","assignment","study","after school","optional","practice","workload","busywork",
+    "stress","stressed","tired","drained","overwhelmed","relax","free time","time at home","worksheet","due"
   ],
   "School should start later": [
-    "start time","start later","sleep","tired","morning","bell schedule",
-    "wake up","too early","8 hours","rest","exhausted","fatigue","bus schedule"
-  ],
-  "Video games can help learning": [
-    "video game","gaming","game","learn","educational","practice","skills",
-    "strategy","puzzle","problem solving","memory","hand eye coordination"
+    "start time","start later","sleep","tired","morning","bell schedule","wake up","too early","rest","fatigue","bus schedule"
   ],
   "School uniforms are a good idea": [
-    "uniform","dress code","clothes","bullying","equal","equality","cost",
-    "same outfit","appearance","brand","fashion","fairness"
+    "uniform","dress code","clothes","bullying","equal","equality","cost","same outfit","appearance","brand","fashion","fairness"
   ],
   "Zoos are helpful for animals": [
-    "zoo","animal","habitat","conservation","rescue","species","extinct",
-    "breeding","sanctuary","care","keepers","protection"
+    "zoo","animal","habitat","conservation","rescue","species","extinct","breeding","sanctuary","care","keepers","protection"
   ]
 };
-const SCHOOL_CONTEXT_REGEX = /\b(school|class|teacher|homework|assignment|study|learn|test|grade|bus|bell|period|recess|after school|principal|student|locker|cafeteria)\b/i;
 function keywordMatch(topic, text) {
   const list = TOPIC_KEYWORDS[topic] || [];
   const lower = (text || '').toLowerCase();
   return list.some(k => lower.includes(k));
 }
-async function semanticOnTopicCheck(openai, topic, message) {
-  try {
-    const resp = await openai.responses.create({
-      model: "gpt-4o-mini",
-      input: `You are a strict classifier for middle-school debates.
-Topic: "${topic}"
-Message: "${message}"
-Decide if the message is relevant to the topic, even if it uses indirect school-related reasons.
-Answer ONLY JSON: {"on_topic": true|false}`
-    });
-    const txt = (resp.output_text || "").trim();
-    const s = txt.indexOf("{"); const e = txt.lastIndexOf("}");
-    const json = JSON.parse(txt.slice(s, e+1));
-    return !!json.on_topic;
-  } catch {
-    return true;
-  }
-}
 
 /* ------------------------------ Debate API ------------------------------- */
+// NOTE: moderation is *only* a tiny hard-ban now (sexual/self-harm/graphic violence).
+// Benign “hacking” in learning contexts won't be blocked.
+const HARD_BAN = /\b(rape|porn|pornography|xxx|onlyfans|sex|nude|sexual|suicide|kill yourself|self[-\s]?harm)\b/i;
+
 app.post('/api/debate', async (req, res) => {
   try {
     const { message, difficulty = "Normal", round = 1, topic = null, studentInfo = {} } = req.body;
@@ -219,72 +218,101 @@ app.post('/api/debate', async (req, res) => {
 
     const studentKey = `${studentInfo.firstName || "unknown"}_${studentInfo.lastInitial || ""}`;
 
-    // --- Moderation ---
-    const badRegex = /\b(sex|porn|jerk|masturbat|nude|onlyfans|xxx|fuck|shit|biden|trump|democrat|republican|muslim|christian|hindu|atheist|jew|bible|quran|torah|church|mosque|synagogue)\b/i;
-    const hasBad = badRegex.test(message);
-    let modFlagged = false;
-    try {
-      const mod = await openai.moderations.create({ model: "omni-moderation-latest", input: message });
-      modFlagged = mod.results?.[0]?.flagged || false;
-    } catch (e) { console.warn("Moderation check failed:", e.message); }
-
-    const flagged = hasBad || modFlagged;
-    const currentCount = sensitiveCounts.get(studentKey) || 0;
-    if (flagged) {
-      const newCount = currentCount + 1;
-      sensitiveCounts.set(studentKey, newCount);
-      if (newCount >= 2) {
-        return res.json({ violation: true, category: "sensitive", endDebate: true,
-          allowRetry: false, instructions: "We have to stop the debate now to keep things school-appropriate." });
-      } else {
-        return res.json({ violation: true, category: "sensitive", allowRetry: true,
-          instructions: "Please avoid adult, political, or religious content. Let's keep the discussion school-safe." });
+    // 1) Minimal hard-ban (no generic moderation call)
+    if (HARD_BAN.test(message)) {
+      const current = sensitiveCounts.get(studentKey) || 0;
+      const next = current + 1;
+      sensitiveCounts.set(studentKey, next);
+      if (next >= 2) {
+        return res.json({
+          violation: true,
+          category: "sensitive",
+          endDebate: true,
+          allowRetry: false,
+          instructions: "We have to stop the debate now to keep things school-appropriate."
+        });
       }
-    }
-    if (currentCount > 0 && !flagged) sensitiveCounts.set(studentKey, 0);
-
-    // --- On-topic ---
-    let onTopic = true;
-    if (topic) {
-      if (round === 1) onTopic = keywordMatch(topic, message);
-      else {
-        onTopic = keywordMatch(topic, message) || SCHOOL_CONTEXT_REGEX.test(message);
-        if (!onTopic) onTopic = await semanticOnTopicCheck(openai, topic, message);
-      }
-    }
-    if (!onTopic) {
-      return res.json({ violation: true, category: "offtopic", allowRetry: true,
-        instructions: `Let's stay on “${topic}”. Try mentioning the topic directly or related ideas like stress or practice.` });
+      return res.json({
+        violation: true,
+        category: "sensitive",
+        allowRetry: true,
+        instructions: "Please avoid explicit sexual or self-harm content. Let's keep the discussion school-safe."
+      });
+    } else {
+      if (sensitiveCounts.get(studentKey)) sensitiveCounts.set(studentKey, 0);
     }
 
-    // --- Difficulty profiles ---
+    // 2) VERY soft on-topic nudge (never blocks)
+    let hint = "";
+    if (topic && !keywordMatch(topic, message)) {
+      hint = `Let’s try to mention the topic “${topic}” directly or a related idea.`;
+    }
+
+    // 3) Difficulty profiles with “pivot” guidance (less full concession as difficulty rises)
     const profiles = {
       Beginner: {
-        style: `You are a friendly teacher. Give one short, kind counterpoint using simple words.`,
+        style: `
+You are a friendly teacher.
+Give ONE short kind counterpoint with simple words.
+Freely agree when the student is reasonable; praise effort.`,
         bias: 0.20
       },
-      Intermediate: { style: `You are a polite coach. Give gentle counterpoints, praise effort.`, bias: 0.30 },
-      Normal: { style: `You are a balanced peer. Provide one clear counterpoint politely.`, bias: 0.50 },
-      Hard: { style: `You are logical. Give two counterpoints with reasoning.`, bias: 0.65 },
-      Extreme: { style: `You are an expert debater. Use logic and evidence; challenge weak ideas.`, bias: 0.80 }
+      Intermediate: {
+        style: `
+You are a polite coach.
+Acknowledge strong points briefly, then add ONE gentle counterpoint or limitation to keep the debate active.
+Avoid full concession; try to offer a new angle.`,
+        bias: 0.30
+      },
+      Normal: {
+        style: `
+You are a balanced peer.
+If you agree, keep it brief, then pivot to a new angle or potential drawback to regain balance.
+Provide ONE clear counterpoint politely.`,
+        bias: 0.50
+      },
+      Hard: {
+        style: `
+You are a logical debater.
+If the student's point is strong, briefly acknowledge it, then present TWO counters or caveats from different angles.
+Avoid full concession; aim to keep a slight edge.`,
+        bias: 0.65
+      },
+      Extreme: {
+        style: `
+You are an expert debater.
+Avoid full agreement: if a point is valid, acknowledge crisply, then pivot with multiple well-reasoned counters, evidence, or edge cases.
+Your goal is to regain the edge while staying respectful and concise.`,
+        bias: 0.70
+      }
     };
     const profile = profiles[difficulty] || profiles.Normal;
 
+    // 4) Prompt asks the model to return concession + student_strength (optional but helpful)
     const politeRules = `
 General rules:
 - Be respectful and age-appropriate.
 - Keep replies under 120 words.
-- Stay on the chosen topic: ${topic}.
+- Stay on the chosen topic: ${topic || "student's choice"}.
 - Encourage reflection and curiosity.`;
 
     const prompt = `
 ${politeRules}
-You are in Round ${round} of 3.
+Round ${round} of 3.
 Difficulty: ${difficulty}
 ${profile.style}
-Output ONLY JSON:
-{"reply":"string","stance":"agree"|"disagree"|"mixed","outcome":"student"|"ai"|"mixed","score":number}
-Student said:"""${message}"""`;
+
+Output ONLY JSON with these keys:
+{
+  "reply": "string",
+  "stance": "agree"|"disagree"|"mixed",
+  "outcome": "student"|"ai"|"mixed",
+  "score": number,
+  "concession": number,          // 0..1, how much you conceded (0 = none, 1 = fully conceded)
+  "student_strength": number     // 0..1, how strong the student's argument was this turn
+}
+
+Student said: """${message}"""`;
 
     const r = await openai.responses.create({ model: "gpt-4o-mini", input: prompt });
     const out = (r.output_text || "").trim();
@@ -293,48 +321,91 @@ Student said:"""${message}"""`;
       const s = out.indexOf("{"); const e = out.lastIndexOf("}");
       data = JSON.parse(out.slice(s, e + 1));
     } catch {
-      data = { reply: "That's an interesting point!", stance: "mixed", outcome: "mixed", score: profile.bias };
+      data = {
+        reply: "That's an interesting point—here’s one idea to consider on this topic.",
+        stance: "mixed",
+        outcome: "mixed",
+        score: profile.bias,
+        concession: 0.0,
+        student_strength: 0.5
+      };
     }
 
-    // --- Scoring ---
-    const clamp = (x,a=0,b=1)=>Math.max(a,Math.min(b,x));
-    let score = typeof data.score==="number"?clamp(data.score):profile.bias;
-    const mix=(a,b,t)=>a*(1-t)+b*t;
-    const dampByDiff={Beginner:0.25,Intermediate:0.35,Normal:0.5,Hard:0.65,Extreme:0.75};
+    // 5) Base scoring
+    const clamp01 = (x)=>Math.max(0,Math.min(1,x));
+    let score = typeof data.score === "number" ? clamp01(data.score) : profile.bias;
+
+    // damp toward profile bias (makes levels feel different)
+    const mix = (a,b,t)=>a*(1-t)+b*t;
+    const dampByDiff = { Beginner:0.25, Intermediate:0.35, Normal:0.5, Hard:0.65, Extreme:0.75 };
     score = mix(score, profile.bias, dampByDiff[difficulty] ?? 0.5);
-    if (difficulty==="Beginner"){score=Math.min(score,0.42);score=clamp(score-0.10,0,1);}
-    else if (difficulty==="Intermediate"){score=Math.min(score,0.48);score=clamp(score-0.05,0,1);}
-    else if (difficulty==="Hard"){score=Math.max(score,0.55);}
-    else if (difficulty==="Extreme"){score=Math.max(score,0.70);}
-    score = clamp(score + (Math.random()*0.04-0.02));
 
-    if ((difficulty==="Beginner"||difficulty==="Intermediate") && Math.random()<0.6){
-      data.outcome="student";
-      if (data.reply && !/great|good|nice|smart|agree/i.test(data.reply))
-        data.reply += " That’s a great way to think about it—thanks for sharing!";
-    } else {
-      if (score>0.53) data.outcome="ai";
-      else if (score<0.47) data.outcome="student";
-      else data.outcome="mixed";
+    // 6) Difficulty-scaled stance nudges (except Beginner)
+    // If AI agrees, give student credit; if mixed, smaller credit.
+    // Extreme gains the most resistance to conceding, but still moves if it does agree.
+    const TUNE = {
+      Intermediate: { agree: -0.07, mixed: -0.03, counterPush: +0.02 },
+      Normal:       { agree: -0.10, mixed: -0.05, counterPush: +0.04 },
+      Hard:         { agree: -0.13, mixed: -0.07, counterPush: +0.06 },
+      Extreme:      { agree: -0.17, mixed: -0.09, counterPush: +0.08 }
+    };
+
+    const concession   = clamp01(Number(data.concession ?? 0));        // 0..1
+    const stuStrength  = clamp01(Number(data.student_strength ?? 0.5)); // 0..1
+    if (difficulty !== "Beginner") {
+      const t = TUNE[difficulty] || TUNE.Normal;
+
+      if (data.stance === "agree") {
+        // more agreement => more shift toward student
+        score += t.agree * (0.6 + 0.4*concession); // scale by concession
+      } else if (data.stance === "mixed") {
+        score += t.mixed * (0.5 + 0.5*concession);
+      } else {
+        // explicit countering: tiny push back toward AI edge
+        score += t.counterPush * (0.3 + 0.7*(1 - concession));
+      }
+
+      // visible credit if the student argument looks strong
+      if (stuStrength >= 0.6) score -= 0.03;
     }
 
-    const meter=Math.round(score*100);
-    let leader="tied";
-    if (meter>53) leader="ai";
-    else if (meter<47) leader="student";
-    const label=leader==="ai"
-      ?(meter>70?"AI far ahead":meter>60?"AI slightly ahead":"AI just ahead")
-      :leader==="student"
-        ?(meter<30?"Student far ahead":meter<40?"Student slightly ahead":"Student just ahead")
-        :"Neck and neck";
+    // keep in range
+    score = clamp01(score);
 
-    data.round=round;
-    data.nextRound=round+1;
-    data.endDebate=data.nextRound>3;
-    if (!data.reply) data.reply="Thanks! I see your point.";
-    data.hud={meter,leader,label,difficulty};
+    // 7) Tiny natural jitter
+    score = clamp01(score + (Math.random()*0.04 - 0.02));
+
+    // 8) Outcome from score (no “easy mode” student nudge anymore)
+    if (score > 0.53) data.outcome = "ai";
+    else if (score < 0.47) data.outcome = "student";
+    else data.outcome = "mixed";
+
+    // 9) HUD computation
+    const meter = Math.round(score*100);
+    let leader = "tied";
+    if (meter > 53) leader = "ai";
+    else if (meter < 47) leader = "student";
+
+    const label = leader === "ai"
+      ? (meter >= 80 ? "AI far ahead"
+        : meter >= 65 ? "AI clearly ahead"
+        : "AI slightly ahead")
+      : leader === "student"
+        ? (meter <= 20 ? "Student far ahead"
+          : meter <= 35 ? "Student clearly ahead"
+          : "Student slightly ahead")
+        : "Neck and neck";
+
+    data.score = score;
+    data.round = round;
+    data.nextRound = round + 1;
+    data.endDebate = data.nextRound > 3;
+    if (!data.reply) data.reply = "Thanks! I see your point—here’s one idea to consider on this topic.";
+    data.hud = { meter, leader, label, difficulty };
+    if (hint) data.hint = hint;
 
     res.json(data);
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error:"Failed to get AI response." });
