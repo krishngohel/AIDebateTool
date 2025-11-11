@@ -20,17 +20,16 @@
       <button id="submitBtn">Submit Argument</button>
 
       <!-- Win Meter HUD -->
-<div id="hud" class="hud hidden" aria-live="polite">
-  <div class="hud-bar" role="progressbar" aria-label="Who is winning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
-    <div class="hud-fill" id="hudFill" style="width:50%"></div>
-  </div>
-  <div class="hud-legend">
-    <span>Student</span>
-    <span id="hudLabel">Neck and neck</span>
-    <span>AI</span>
-  </div>
-</div>
-
+      <div id="hud" class="hud hidden" aria-live="polite">
+        <div class="hud-bar" role="progressbar" aria-label="Who is winning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
+          <div class="hud-fill" id="hudFill" style="width:50%"></div>
+        </div>
+        <div class="hud-legend">
+          <span>Student</span>
+          <span id="hudLabel">Neck and neck</span>
+          <span>AI</span>
+        </div>
+      </div>
 
       <div id="reflection" class="reflection hidden">
         <h3>Reflection</h3>
@@ -55,16 +54,14 @@
     </div>
   </div>
 
-  <!-- Debate Over Popup -->
   <!-- End of Debate Popup -->
-<div id="popup" class="popup hidden">
-  <div class="popup-content">
-    <h2 class="popup-title"></h2>
-    <p class="popup-message"></p>
-    <button class="closePopup">Back to Start</button>
+  <div id="popup" class="popup hidden">
+    <div class="popup-content">
+      <h2 class="popup-title"></h2>
+      <p class="popup-message"></p>
+      <button class="closePopup">Back to Start</button>
+    </div>
   </div>
-</div>
-
 
   <!-- Welcome Popup -->
   <div id="welcomePopup" class="popup">
@@ -98,5 +95,20 @@
 
   <!-- Script -->
   <script src="script.js" defer></script>
+
+  <!-- Enable Enter-to-Submit -->
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const textarea = document.getElementById("studentInput");
+      const submitBtn = document.getElementById("submitBtn");
+
+      textarea.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          submitBtn.click();
+        }
+      });
+    });
+  </script>
 </body>
 </html>
