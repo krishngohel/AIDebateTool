@@ -1,4 +1,5 @@
-// script.js – relaxed on-topic + log every turn (ok/violation)
+// script.js – relaxed on-topic + logs every turn, with client word-limits + live counter + side picker (modal)
+// Fixes: side modal appears only after topic is chosen; side buttons advance to next stage
 document.addEventListener("DOMContentLoaded", () => {
   const SETTINGS_KEY = "debate_user_settings_v1";
   let settings = null;
@@ -36,6 +37,19 @@ document.addEventListener("DOMContentLoaded", () => {
   let finishedReady = false;
   let selectedTopic = settings?.topic || null;
   let lastHUD = { meter: 50, leader: "tied", label: "Neck and neck" };
+
+  // Client word-limits (mirror server)
+  function mapDifficultyToBehavior(diff){
+    switch (diff) {
+      case "Beginner":     return { maxWords: 90 };
+      case "Intermediate": return { maxWords: 90 };
+      case "Normal":       return { maxWords: 90 };
+      case "Hard":         return { maxWords:130 };
+      case "Extreme":      return { maxWords:200 };
+      default:             return { maxWords: 90 };
+    }
+  }
+  const behavior = mapDifficultyToBehavior(settings?.difficulty || "Normal");
 
   // Helpers
   const safe = (el, cb) => { if (el) cb(el); };
@@ -93,7 +107,90 @@ document.addEventListener("DOMContentLoaded", () => {
     return bank.tied;
   }
 
-  // API
+  // ===== Live word counter =====
+  const counter = document.createElement("div");
+  counter.id = "wordCounter";
+  counter.style.fontSize = "12px";
+  counter.style.marginTop = "6px";
+  counter.style.opacity = "0.8";
+  counter.textContent = `0 / ${behavior.maxWords} words`;
+  if (studentInput && studentInput.parentNode) {
+    studentInput.parentNode.insertBefore(counter, studentInput.nextSibling);
+  }
+  function currentWordCount(str) {
+    return (str.match(/\b[\w']+\b/g) || []).length;
+  }
+  function refreshCounter() {
+    const used = currentWordCount(studentInput.value || "");
+    counter.textContent = `${used} / ${behavior.maxWords} words`;
+    const over = used > behavior.maxWords;
+    counter.style.color = over ? "#b91c1c" : "";
+    submitBtn.disabled = over || submitBtn.dataset.locked === "1";
+  }
+  studentInput.addEventListener("input", refreshCounter);
+  refreshCounter();
+
+  // ===== Side-selection popup (true modal overlay) =====
+  const sidePopup = document.createElement("div");
+  sidePopup.id = "sidePopup";
+  // start truly hidden (display:none) to avoid CSS class dependency
+  sidePopup.setAttribute("style",
+    "position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:9999;");
+  sidePopup.innerHTML = `
+    <div style="background:#16151a;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.5);padding:28px;min-width:320px;max-width:520px;">
+      <h2 style="margin:0 0 8px 0;">Pick your side</h2>
+      <p style="margin:0 0 16px 0;opacity:.9">For the topic “<span id="sideTopic"></span>”, are you <strong>FOR</strong> it or <strong>AGAINST</strong> it?</p>
+      <div style="display:flex;gap:10px;margin-bottom:8px;">
+        <button id="sideFor" class="btn-primary" type="button">I’m FOR</button>
+        <button id="sideAgainst" class="btn-secondary" type="button">I’m AGAINST</button>
+      </div>
+      <small class="muted">The AI will argue the opposite side to keep the debate interesting.</small>
+    </div>`;
+  document.body.appendChild(sidePopup);
+
+  function showSidePopup() {
+    const span = sidePopup.querySelector("#sideTopic");
+    if (span) span.textContent = selectedTopic || "";
+    sidePopup.style.display = "flex";
+  }
+  function hideSidePopup() {
+    sidePopup.style.display = "none";
+  }
+
+  // After side chosen → unlock UI + start session + intro line
+  async function afterSideChosen() {
+    hideSidePopup();
+    topicPopup.classList.add("hidden");
+    studentInput.disabled = false;
+    submitBtn.disabled = false;
+    submitBtn.dataset.locked = "0";
+    refreshCounter();
+    studentInput.focus();
+
+    const opp = settings.side === 'pro' ? 'AGAINST' : settings.side === 'con' ? 'FOR' : 'OPPOSITE';
+    addMessage(
+      "AI",
+      `Great! We’ll debate: “${selectedTopic}”. You are **${(settings.side || '').toUpperCase()}**; I’ll argue the **${opp}** side. Keep arguments school-appropriate. 👍`
+    );
+
+    await startSession();
+  }
+
+  // Bind side buttons (ensure type="button" so forms don’t swallow clicks)
+  sidePopup.querySelector("#sideFor").addEventListener("click", async (e) => {
+    e.preventDefault();
+    settings.side = "pro";
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    await afterSideChosen();
+  });
+  sidePopup.querySelector("#sideAgainst").addEventListener("click", async (e) => {
+    e.preventDefault();
+    settings.side = "con";
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    await afterSideChosen();
+  });
+
+  // ===== Session APIs =====
   async function startSession() {
     const resp = await fetch("/api/session/start", {
       method: "POST",
@@ -103,13 +200,13 @@ document.addEventListener("DOMContentLoaded", () => {
         last_initial: settings.lastInitial,
         grade: settings.grade,
         difficulty: settings.difficulty,
-        topic: selectedTopic
+        topic: selectedTopic,
+        side: settings.side || null
       })
     });
     const data = await resp.json();
     sessionId = data.session_id;
   }
-
   async function logTurn(payload) {
     if (!sessionId) return;
     await fetch("/api/session/logTurn", {
@@ -118,7 +215,6 @@ document.addEventListener("DOMContentLoaded", () => {
       body: JSON.stringify({ session_id: sessionId, ...payload })
     });
   }
-
   async function finishSession(finalHud, violationsTotal=0) {
     if (!sessionId) return;
     await fetch("/api/session/finish", {
@@ -143,6 +239,7 @@ document.addEventListener("DOMContentLoaded", () => {
         difficulty: settings?.difficulty || "Normal",
         round: currentRound,
         topic: selectedTopic || null,
+        studentSide: settings?.side || null,
         studentInfo: {
           firstName: settings.firstName,
           lastInitial: settings.lastInitial,
@@ -156,7 +253,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!resp.ok) throw new Error(data?.error || "API error");
     return data;
   }
-
   async function callExplainAPI(student, reply){
     const resp = await fetch("/api/explain", {
       method: "POST",
@@ -167,7 +263,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!resp.ok) throw new Error(data?.error || "Explain error");
     return data;
   }
-
   function outlineToText(outline, fallbackClaim) {
     const claim = outline?.extracted_claim || fallbackClaim || "";
     const steps = Array.isArray(outline?.steps) ? outline.steps.slice(0, 4) : [];
@@ -178,13 +273,14 @@ document.addEventListener("DOMContentLoaded", () => {
     return `${claim ? `“${claim}”\n\n` : ""}${bullets}${strategy}`;
   }
 
-  // UI flow
+  // ===== Initial UI state =====
   safe(finishPopup, el => el.classList.add("hidden"));
   safe(topicPopup,  el => el.classList.add("hidden"));
   safe(welcomePopup, el => el.classList.remove("hidden"));
 
   studentInput.disabled = true;
   submitBtn.disabled = true;
+  submitBtn.dataset.locked = "1";
 
   understoodBtn.addEventListener("click", () => {
     welcomePopup.classList.add("hidden");
@@ -201,19 +297,17 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  confirmTopicBtn.addEventListener("click", async () => {
+  // After topic chosen, show side modal (don’t unlock yet)
+  confirmTopicBtn.addEventListener("click", () => {
     if (!selectedTopic) return;
     const merged = { ...(settings || {}), topic: selectedTopic };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
     settings = merged;
-    topicPopup.classList.add("hidden");
-    studentInput.disabled = false;
-    submitBtn.disabled = false;
-    studentInput.focus();
-    addMessage("AI", `Great! We'll debate: “${selectedTopic}”. Keep arguments school-appropriate and on topic. 👍`);
-    await startSession();
+    // Keep topic modal visible behind? We hide it after side is picked.
+    showSidePopup();
   });
 
+  // ===== Finish popup =====
   function showResultPopup(hudObj) {
     if (!finishPopup) return;
     finishPopup.classList.remove("hidden");
@@ -236,31 +330,36 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // ===== Main flow =====
   submitBtn.addEventListener("click", async () => {
     if (finishedReady) { showResultPopup(lastHUD); return; }
 
     const text = (studentInput.value || "").trim();
     if (!text) return;
     if (!selectedTopic) { topicPopup.classList.remove("hidden"); return; }
+    if (!settings.side) { showSidePopup(); return; }
 
-    // visual thinking
+    // client word limit
+    const used = (text.match(/\b[\w']+\b/g) || []).length;
+    if (used > behavior.maxWords) {
+      alert(`Please keep your argument under ${behavior.maxWords} words for ${settings.difficulty || "Normal"}. You used ${used}.`);
+      return;
+    }
+
     showBubble(studentThought, `Student: ${text}`);
     showBubble(aiThought, "AI: Thinking…");
     lightBulb.classList.remove("on");
     addMessage(settings?.firstName || "Student", text);
     studentInput.value = "";
+    refreshCounter();
 
     const t0 = now();
     try {
       const data = await callDebateAPI(text);
       const latency = Math.round(now() - t0);
 
-      // Soft hint (no violation)
-      if (data.hint) {
-        addMessage("AI", data.hint);
-      }
+      if (data.hint) addMessage("AI", data.hint);
 
-      // If moderation violation
       if (data.violation) {
         const msg = data.instructions || "Let's keep this discussion school-safe.";
         addMessage("AI", msg);
@@ -286,14 +385,10 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      // Normal reply
+      // normal reply
       addMessage("AI", data.reply);
-      if (data.hud) {
-        updateHUD(data.hud.meter, data.hud.label);
-        lastHUD = data.hud;
-      }
+      if (data.hud) { updateHUD(data.hud.meter, data.hud.label); lastHUD = data.hud; }
 
-      // Thought bubbles
       const reasoning = makeLeadReasoning(currentRound, data.hud, data.stance, selectedTopic);
       showBubble(aiThought, reasoning);
 
@@ -305,7 +400,6 @@ document.addEventListener("DOMContentLoaded", () => {
       lightBulb.classList.add("on");
       setTimeout(() => lightBulb.classList.remove("on"), 900);
 
-      // Log successful turn
       await logTurn({
         round: currentRound,
         student_text: text,
@@ -317,7 +411,6 @@ document.addEventListener("DOMContentLoaded", () => {
         category: ""
       });
 
-      // Rounds
       if (data.endDebate) {
         await finishSession(data.hud);
         studentInput.disabled = true;
