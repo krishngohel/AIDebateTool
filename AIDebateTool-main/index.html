@@ -29,16 +29,132 @@
       <h2>AI Thought Process</h2>
       <div class="robot-visual">
         <div id="studentThought" class="thought-cloud">Student: ...</div>
-        <div class="robot">
-          <div class="robot-head"></div>
-          <div id="lightBulb" class="light-bulb"></div>
+
+        <!-- ✅ Robot container with image + glow -->
+        <div class="robot-container">
+          <img src="robot.png" alt="AI Robot" class="robot-image" />
+          <div class="robot-glow" id="lightBulb"></div>
         </div>
+
         <div id="aiThought" class="thought-cloud">AI: ...</div>
       </div>
     </div>
   </div>
 
-  <script src="script.js"></script>
+  <script src="script.js"><<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Debate Tool</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <!-- Left: Debate Chat -->
+    <div class="debate-section">
+      <h1>AI Debate Tool</h1>
+      <p id="roundTracker" style="text-align:center; color:#c69cff; margin-top:-5px;">
+        Round 1 of 3
+      </p>
+
+      <div id="chatBox" class="chat-box"></div>
+      <textarea id="studentInput" placeholder="Enter your argument (max 90 words)..."></textarea>
+      <button id="submitBtn">Submit Argument</button>
+
+      <!-- Win Meter HUD -->
+      <div id="hud" class="hud hidden" aria-live="polite">
+        <div class="hud-bar" role="progressbar" aria-label="Who is winning" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
+          <div class="hud-fill" id="hudFill" style="width:50%"></div>
+        </div>
+        <div class="hud-legend">
+          <span>Student</span>
+          <span id="hudLabel">Neck and neck</span>
+          <span>AI</span>
+        </div>
+      </div>
+
+      <div id="reflection" class="reflection hidden">
+        <h3>Reflection</h3>
+        <p>Who made the stronger argument?</p>
+        <button id="studentWin">Student</button>
+        <button id="aiWin">AI</button>
+        <p id="reflectionResult"></p>
+      </div>
+    </div>
+
+    <!-- Right: Robot Visualization -->
+    <div class="visualization-section">
+      <h2>AI Thought Process</h2>
+      <div class="robot-visual">
+        <div id="studentThought" class="thought-cloud">Student: ...</div>
+
+        <!-- ✅ Updated robot container -->
+        <div class="robot-container">
+          <img src="robot.png" alt="AI Robot" class="robot-image" />
+          <div class="robot-glow" id="lightBulb"></div>
+        </div>
+
+        <div id="aiThought" class="thought-cloud">AI: ...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- End of Debate Popup -->
+  <div id="popup" class="popup hidden">
+    <div class="popup-content">
+      <h2 class="popup-title"></h2>
+      <p class="popup-message"></p>
+      <button class="closePopup">Back to Start</button>
+    </div>
+  </div>
+
+  <!-- Welcome Popup -->
+  <div id="welcomePopup" class="popup">
+    <div class="popup-content">
+      <h2>Welcome to the AI Debate Tool! 🎉</h2>
+      <p style="text-align:left; line-height:1.5;">
+        In this activity, you'll have a friendly debate with an AI assistant over 3 short rounds.<br><br>
+        💬 Be polite and use respectful language.<br>
+        💡 Support your ideas with reasons and examples.<br>
+        🙌 Listen to the AI’s view — there are no right or wrong answers!<br><br>
+        Once you finish, press <strong>“Finish Debate”</strong> to end.
+      </p>
+      <button id="understoodBtn">Understood</button>
+    </div>
+  </div>
+
+  <!-- Topic Popup -->
+  <div id="topicPopup" class="popup hidden">
+    <div class="popup-content">
+      <h2>Choose a Debate Topic 🎯</h2>
+      <div class="topics">
+        <button class="topic-btn" data-topic="Homework should be optional">Homework should be optional</button>
+        <button class="topic-btn" data-topic="School should start later">School should start later</button>
+        <button class="topic-btn" data-topic="Video games can help learning">Video games can help learning</button>
+        <button class="topic-btn" data-topic="School uniforms are a good idea">School uniforms are a good idea</button>
+        <button class="topic-btn" data-topic="Zoos are helpful for animals">Zoos are helpful for animals</button>
+      </div>
+      <button id="confirmTopicBtn" disabled>Start Debate</button>
+    </div>
+  </div>
+
+  <!-- Script -->
+  <script src="script.js" defer></script>
+
+  <!-- Enable Enter-to-Submit -->
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const textarea = document.getElementById("studentInput");
+      const submitBtn = document.getElementById("submitBtn");
+
+      textarea.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          submitBtn.click();
+        }
+      });
+    });
+  </script>
 </body>
 </html>
-
