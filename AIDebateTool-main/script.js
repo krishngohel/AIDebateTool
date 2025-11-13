@@ -22,21 +22,30 @@ document.addEventListener("DOMContentLoaded", () => {
     "Interesting! Let's see..."
   ];
 
-  function animateAIThoughts(studentText) {
-    studentThought.textContent = "💭 " + studentText;
-    studentThought.classList.add("show");
+function animateAIThoughts(studentText) {
+  studentThought.textContent = "💭 " + studentText;
+  studentThought.classList.add("show");
 
-    aiThought.classList.remove("show");
-    lightBulb.classList.remove("on");
+  aiThought.classList.remove("show");
+  lightBulb.classList.remove("on", "spark");
 
-    aiThoughtSteps.forEach((step, index) => {
-      setTimeout(() => {
-        lightBulb.classList.add("on");
-        aiThought.textContent = "💭 " + step;
-        aiThought.classList.add("show");
-      }, 600 + index * 900);
-    });
-  }
+  // Turn on the bulb once — steady glow throughout thinking
+  setTimeout(() => lightBulb.classList.add("on"), 300);
+
+  aiThoughtSteps.forEach((step, index) => {
+    const baseDelay = 600 + index * 900;
+
+    setTimeout(() => {
+      aiThought.textContent = "💭 " + step;
+      aiThought.classList.add("show");
+
+      // Add a brief spark flicker per thought, no re-removing 'on'
+      lightBulb.classList.add("spark");
+      setTimeout(() => lightBulb.classList.remove("spark"), 700);
+    }, baseDelay);
+  });
+}
+
 
   // Updated to ensure AI gives a debate-style opposing reply
   async function fetchDebateReply(message) {
@@ -44,8 +53,8 @@ document.addEventListener("DOMContentLoaded", () => {
       You are participating in a structured academic debate.
       The student says: "${message}"
       Your role is to respond with a clear and logical counterargument.
-      Directly oppose their point using critical reasoning, evidence, or logic.
-      Be concise (2–4 sentences max), persuasive, and respectful.
+      Directly oppose or support (support after a few rounds IF their arugment is logical and supported by proper evidence and all other reasoning) their point using critical reasoning, evidence, or logic.
+      Be concise (2–4 sentences max), persuasive, and respectful. note this is structured to younger k-12 students.
     `;
 
     const resp = await fetch('/api/debate', {
