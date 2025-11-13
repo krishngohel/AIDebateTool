@@ -7,6 +7,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
+import profaneWords from 'profane-words';   // ⬅️ NEW: profanity wordlist
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -217,10 +218,32 @@ function wordCount(s = "") {
   return (s.match(/\b[\w']+\b/g) || []).length;
 }
 
+/* ------------------- Profanity list integration ------------------------- */
+
+// Build a Set from the profane-words package for fast lookup
+const RAW_PROFANE = Array.isArray(profaneWords)
+  ? profaneWords
+  : (Array.isArray(profaneWords?.default) ? profaneWords.default : []);
+
+const PROFANE_SET = new Set(
+  RAW_PROFANE.map(w => w.toLowerCase())
+);
+
+// Helper: check if a message contains any profane word from the list
+function containsProfanity(message = "") {
+  const lower = message.toLowerCase();
+  const tokens = lower.match(/\b[\w']+\b/g) || [];
+  return tokens.some(t => PROFANE_SET.has(t));
+}
+
+// VERY strong content: explicit sexual + self-harm
+const HARD_BAN = /\b(rape|porn|pornography|xxx|onlyfans|nude|naked|sexual\s+act|suicide|kill yourself|self[-\s]?harm)\b/i;
+
+// Strong language, slurs, explicit solo sexual acts, etc.
+const LANGUAGE_BAN = /\b(fuck(?:ing|er|s)?|shit(?:ty)?|bitch(?:es)?|asshole|bastards?|dick(?:head)?|pussy|masturbat(?:e|ing|ion)|jerk(?:ing)?\s*off|cocksucker|whore|slut|nigga|nigger|beaner|faggot|fag|faggetry|ass)\b/i;
+
 
 /* ------------------------------ Debate API ------------------------------- */
-// NOTE: moderation is *only* a tiny hard-ban now (sexual/self-harm/graphic violence).
-const HARD_BAN = /\b(rape|porn|pornography|xxx|onlyfans|sex|nude|sexual|suicide|kill yourself|self[-\s]?harm)\b/i;
 
 app.post('/api/debate', async (req, res) => {
   try {
@@ -229,35 +252,55 @@ app.post('/api/debate', async (req, res) => {
       difficulty = "Normal",
       round = 1,
       topic = null,
-      studentSide = null,         // <-- NEW: student's chosen side ('pro' or 'con')
+      studentSide = null,         // student's chosen side ('pro' or 'con')
       studentInfo = {}
     } = req.body;
 
     if (!message) return res.status(400).json({ error: 'Missing message' });
 
     const studentKey = `${studentInfo.firstName || "unknown"}_${studentInfo.lastInitial || ""}`;
+    const wc = wordCount(message || "");   // ✅ use word count for short-answer penalty
 
-    // 1) Minimal hard-ban (no generic moderation call)
+    // 1) Manual filtering: very strong content vs strong language
+    let violationType = null;
+
     if (HARD_BAN.test(message)) {
+      violationType = "hard";
+    } else if (LANGUAGE_BAN.test(message)) {
+      violationType = "language";
+    }
+
+    if (violationType) {
       const current = sensitiveCounts.get(studentKey) || 0;
       const next = current + 1;
       sensitiveCounts.set(studentKey, next);
-      if (next >= 2) {
+
+      const isHard = violationType === "hard";
+
+      const firstMsg = isHard
+        ? "Please avoid graphic self-harm or explicit sexual content. Let's keep this school-safe."
+        : "Please avoid strong curse words or slurs. Let's keep the debate respectful and school-safe.";
+
+      const stopMsg = "We have to stop the debate now to keep things school-appropriate.";
+
+      if (next >= 3) {
         return res.json({
           violation: true,
           category: "sensitive",
           endDebate: true,
           allowRetry: false,
-          instructions: "We have to stop the debate now to keep things school-appropriate."
+          instructions: stopMsg
         });
       }
+
       return res.json({
         violation: true,
         category: "sensitive",
         allowRetry: true,
-        instructions: "Please avoid explicit sexual or self-harm content. Let's keep the discussion school-safe."
+        instructions: firstMsg
       });
     } else {
+      // If previous violations exist but message is now clean, reset count
       if (sensitiveCounts.get(studentKey)) sensitiveCounts.set(studentKey, 0);
     }
 
@@ -267,50 +310,49 @@ app.post('/api/debate', async (req, res) => {
       hint = `Let’s try to mention the topic “${topic}” directly or a related idea.`;
     }
 
-   // 3) Difficulty profiles with “pivot” guidance (less full concession as difficulty rises)
-const profiles = {
-  Beginner: {
-    style: `
+    // 3) Difficulty profiles with “pivot” guidance (less full concession as difficulty rises)
+    const profiles = {
+      Beginner: {
+        style: `
 You are a friendly teacher.
 Give ONE short kind counterpoint with simple words.
 Freely agree when the student is reasonable; praise effort.
 Keep your reply under 70 words.`,
-    bias: 0.18   // student-favoring base (unchanged)
-  },
-  Intermediate: {
-    style: `
+        bias: 0.18   // student-favoring base
+      },
+      Intermediate: {
+        style: `
 You are a polite coach.
 Acknowledge strong points briefly, then add ONE gentle counterpoint or limitation.
 Avoid full concession; try a new angle.
 Keep your reply under 90 words.`,
-    bias: 0.40   // ↓ was 0.30 or pulled too AI after damping; set closer to student
-  },
-  Normal: {
-    style: `
+        bias: 0.40   // slight student tilt
+      },
+      Normal: {
+        style: `
 You are a balanced peer.
 If you agree, keep it brief, then pivot to a new angle to stay balanced.
 Provide ONE clear counterpoint politely. Max 100 words.`,
-    bias: 0.48   // ↓ was 0.50; slightly student-leaning baseline
-  },
-  Hard: {
-    style: `
+        bias: 0.48   // near neutral
+      },
+      Hard: {
+        style: `
 You are a logical debater.
 Briefly acknowledge, then present TWO counters or caveats from different angles.
 Max 110 words.`,
-    bias: 0.65
-  },
-  Extreme: {
-    style: `
+        bias: 0.65
+      },
+      Extreme: {
+        style: `
 You are an expert debater.
 Avoid full agreement: acknowledge crisply, then pivot with multiple well-reasoned counters.
 Max 120 words.`,
-    bias: 0.70
-  }
-};
-const profile = profiles[difficulty] || profiles.Normal;
+        bias: 0.70
+      }
+    };
+    const profile = profiles[difficulty] || profiles.Normal;
 
-
-    // Make sure the AI argues the opposite of the student's side
+    // Make sure the AI argues the opposite of the student's chosen side
     let aiSide = "neutral";
     if (studentSide === "pro") aiSide = "con";
     else if (studentSide === "con") aiSide = "pro";
@@ -321,12 +363,16 @@ General rules:
 - Be respectful and age-appropriate.
 - Stay on the chosen topic: ${topic || "student's choice"}.
 - Encourage reflection and curiosity.
-- Argue the **${aiSide.toUpperCase()}** side relative to the student.
+- The debate statement is: "${topic || "student's choice"}".
+- The student picked side: "${studentSide || "unknown"}" on this statement.
+- You must consistently defend the **${aiSide.toUpperCase()}** side of that statement
+  for the whole debate, even if the student changes their mind later.
+- You may briefly agree with specific points if they are fair, but do NOT switch sides overall.
 `;
 
     const prompt = `
 ${politeRules}
-Round ${round} of 3.
+Round ${round} of 5.
 Difficulty: ${difficulty}
 ${profile.style}
 
@@ -336,8 +382,8 @@ Output ONLY JSON with these keys:
   "stance": "agree"|"disagree"|"mixed",
   "outcome": "student"|"ai"|"mixed",
   "score": number,
-  "concession": number,          // 0..1, how much you conceded (0 = none, 1 = fully conceded)
-  "student_strength": number     // 0..1, how strong the student's argument was this turn
+  "concession": number,
+  "student_strength": number
 }
 
 Student side: "${studentSide || "unknown"}"
@@ -361,158 +407,115 @@ Student said: """${message}"""`;
       };
     }
 
-// 5) Base scoring + difficulty shaping
-// --- DYNAMIC SCORING (argument-driven, light difficulty tilt) ------------
-const clamp01 = x => Math.max(0, Math.min(1, x));
-const mix     = (a,b,t)=>a*(1-t)+b*t;
+    // === DYNAMIC SCORING (argument-driven, light difficulty tilt) ===
+    const clamp01 = x => Math.max(0, Math.min(1, x));
+    const mix = (a,b,t)=>a*(1-t)+b*t;
 
-// Read signals (with safe defaults)
-const concession   = clamp01(Number(data.concession ?? 0));        // 0..1
-const stuStrength  = clamp01(Number(data.student_strength ?? 0.5)); // 0..1
-const stance       = (data.stance || "mixed").toLowerCase();
+    const concession  = clamp01(Number(data.concession ?? 0));
+    const stuStrength = clamp01(Number(data.student_strength ?? 0.5));
+    const stance      = (data.stance || "mixed").toLowerCase();
 
-// 1) Build neutral, argument-driven base around 0.5
-//    (0 → student ahead, 1 → AI ahead)
-let base = 0.5;
+    // 1) Neutral base around 0.5 (0 → student ahead, 1 → AI ahead)
+    let base = 0.5;
 
-// Agreement / mixed / disagreement shaping
-if (stance === "agree") {
-  // more concession → more shift to student
-  base -= 0.12 * (0.6 + 0.4 * concession);
-} else if (stance === "mixed") {
-  base -= 0.06 * (0.5 + 0.5 * concession);
-} else {
-  // disagree → toward AI, softened if conceded
-  base += 0.08 * (1 - concession);
-}
+    if (stance === "agree") {
+      base -= 0.12 * (0.6 + 0.4 * concession);
+    } else if (stance === "mixed") {
+      base -= 0.06 * (0.5 + 0.5 * concession);
+    } else {
+      base += 0.08 * (1 - concession);
+    }
 
-// Student strength pulls toward student when high (±0.15 swing total)
-base += (0.5 - stuStrength) * 0.30;
+    // Student strength pulls toward student when high
+    base += (0.5 - stuStrength) * 0.30;
 
-// Tiny natural jitter
-base += (Math.random() * 0.02 - 0.01);
+    // ✅ Penalize ultra-short / low-effort responses on all but Beginner
+    if (difficulty !== "Beginner") {
+      if (wc <= 4) {
+        // e.g., "homework bad" → strongly nudge toward AI
+        base = mix(base, 0.68, 0.55);
+      } else if (wc <= 8) {
+        // short, weak arguments → softer nudge to AI
+        base = mix(base, 0.60, 0.35);
+      }
+    }
 
-base = clamp01(base);
+    // Tiny jitter
+    base += (Math.random() * 0.02 - 0.01);
+    base = clamp01(base);
 
-// 2) Apply a light difficulty tilt to hit target win tendencies
-function applyDifficultyTilt(baseScore, diff) {
-  // target center (>0.5 favors AI) and small pull (k)
-  let target = 0.50, k = 0.00;
+    function applyDifficultyTilt(baseScore, diff) {
+      let target = 0.50, k = 0.00;
+      switch (diff) {
+        case "Beginner":
+          target = 0.25; k = 0.00;  // student-friendly
+          break;
+        case "Intermediate":
+          target = 0.40; k = 0.08;  // slight student tilt (~30% AI overall)
+          break;
+        case "Normal":
+          target = 0.50; k = 0.05;  // ~50/50
+          break;
+        case "Hard":
+          target = 0.60; k = 0.12;  // edge to AI
+          break;
+        case "Extreme":
+          target = 0.75; k = 0.35;  // strong AI edge
+          break;
+        default:
+          target = 0.50; k = 0.05;
+      }
+      return clamp01(mix(baseScore, target, k));
+    }
 
-  switch (diff) {
-    case "Beginner":
-      // very student friendly
-      target = 0.46; k = 0.00;  // almost neutral; guardrail below enforces win
-      break;
-    case "Intermediate":
-      // slight nudge to STUDENT (target < 0.5)
-      target = 0.48; k = 0.08;  // ~30% AI overall
-      break;
-    case "Normal":
-      // neutral
-      target = 0.50; k = 0.05;  // ~50/50
-      break;
-    case "Hard":
-      // edge to AI
-      target = 0.58; k = 0.12;  // ~60% AI overall
-      break;
-    case "Extreme":
-      // strong AI edge
-      target = 0.72; k = 0.35;  // ~90% AI overall
-      break;
-    default:
-      target = 0.50; k = 0.05;
-  }
-  return clamp01(mix(baseScore, target, k));
-}
+    let score = applyDifficultyTilt(base, difficulty);
 
-let score = applyDifficultyTilt(base, difficulty);
+    // Guardrails
+    if (difficulty === "Beginner") {
+      const saidAnything = (message || "").trim().length > 0;
+      if (saidAnything) score = Math.min(score, 0.35);  // ✅ easy mode: student clearly ahead
+    } else if (difficulty === "Extreme") {
+      if (stuStrength >= 0.75 && Math.random() < 0.10) {
+        score = Math.min(score, 0.46); // ~10% hero wins
+      }
+    }
 
-// 3) Guardrails by difficulty
-if (difficulty === "Beginner") {
-  // Any non-empty student input = a student-side score
-  const saidAnything = (message || "").trim().length > 0;
-  if (saidAnything) score = Math.min(score, 0.35);
-} else if (difficulty === "Extreme") {
-  // Allow ~10% heroic upsets if student_strength is high
-  if (stuStrength >= 0.75 && Math.random() < 0.10) {
-    score = Math.min(score, 0.46);
-  }
-}
+    // Outcome
+    if (score > 0.52) data.outcome = "ai";
+    else if (score < 0.48) data.outcome = "student";
+    else data.outcome = "mixed";
 
-// 4) Outcome decision with a gentle tie band
-if (score > 0.52) data.outcome = "ai";
-else if (score < 0.48) data.outcome = "student";
-else data.outcome = "mixed";
+    // HUD
+    const meter = Math.round(score * 100);
+    let leader = "tied";
+    if (meter > 52) leader = "ai";
+    else if (meter < 48) leader = "student";
 
-// 5) HUD
-const meter = Math.round(score * 100);
-let leader = "tied";
-if (meter > 52) leader = "ai";
-else if (meter < 48) leader = "student";
+    const label = leader === "ai"
+      ? (meter >= 80 ? "AI far ahead"
+        : meter >= 65 ? "AI clearly ahead"
+        : "AI slightly ahead")
+      : leader === "student"
+        ? (meter <= 20 ? "Student far ahead"
+          : meter <= 35 ? "Student clearly ahead"
+          : "Student slightly ahead")
+        : "Neck and neck";
 
-const label = leader === "ai"
-  ? (meter >= 80 ? "AI far ahead"
-    : meter >= 65 ? "AI clearly ahead"
-    : "AI slightly ahead")
-  : leader === "student"
-    ? (meter <= 20 ? "Student far ahead"
-      : meter <= 35 ? "Student clearly ahead"
-      : "Student slightly ahead")
-    : "Neck and neck";
-
-data.score     = score;
-data.round     = round;
-data.nextRound = round + 1;
-data.endDebate = data.nextRound > 5;
-if (!data.reply) data.reply = "Thanks! I see your point—here’s one idea to consider on this topic.";
-data.hud = { meter, leader, label, difficulty };
-if (hint) data.hint = hint;
+    data.score     = score;
+    data.round     = round;
+    data.nextRound = round + 1;
+    data.endDebate = data.nextRound > 5;
+    if (!data.reply) {
+      data.reply = "Thanks! I see your point—here’s one idea to consider on this topic.";
+    }
+    data.hud = { meter, leader, label, difficulty };
+    if (hint) data.hint = hint;
 
     res.json(data);
 
   } catch (err) {
     console.error(err);
     res.status(500).json({ error:"Failed to get AI response." });
-  }
-});
-
-
-/* ------------------------------ Explain API ------------------------------ */
-app.post('/api/explain', async (req, res) => {
-  try {
-    const { student, reply } = req.body;
-    if (!student || !reply)
-      return res.status(400).json({ error: 'Missing student or reply' });
-
-    const prompt = `
-Explain briefly how the AI formed its reply.
-3–5 bullets, ≤14 words each, 1 emoji per bullet.
-Output ONLY JSON:
-{"extracted_claim":"string","stance":"agree"|"disagree"|"mixed","strategy":"string","steps":["p1","p2","p3"]}
-Student:"""${student}"""
-AI Reply:"""${reply}"""`;
-
-    const r = await openai.responses.create({ model: "gpt-4o-mini", input: prompt });
-    const text = (r.output_text || "").trim();
-    let json;
-    try {
-      const s = text.indexOf("{"); const e = text.lastIndexOf("}");
-      json = JSON.parse(text.slice(s, e + 1));
-    } catch {
-      json = {
-        extracted_claim: student.slice(0, 140),
-        stance: "mixed",
-        strategy: "give a polite counterpoint",
-        steps: ["🔍 Find idea","🎯 Give counterpoint","🧩 Add example","🤝 Suggest compromise"]
-      };
-    }
-    if (!Array.isArray(json.steps) || !json.steps.length)
-      json.steps = ["🔍 Find idea","🎯 Give counterpoint","🧩 Add example","🤝 Suggest compromise"];
-    res.json(json);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to build explanation." });
   }
 });
 

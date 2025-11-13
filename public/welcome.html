@@ -1,116 +1,165 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Welcome • AI Debate Tool</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Debate Tool – Welcome</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
-  <section id="welcomeScreen">
+<body class="welcome-page">
+  <div class="welcome-shell">
     <div class="welcome-card">
-      <h1>Welcome to the AI Debate Tool</h1>
-      <p class="muted">Please fill this out to get started.</p>
+      <h1 class="welcome-title">Welcome to the AI Debate Tool</h1>
+      <p class="welcome-subtitle">
+        You’ll practice your argument skills by debating an AI in a short,
+        friendly conversation. Tell us a bit about yourself to get started.
+      </p>
 
-      <!-- On submit, browser navigates to /debate -->
-      <form id="welcomeForm" action="/debate" novalidate>
-        <div class="field-row">
-          <label for="firstName">First name</label>
-          <input id="firstName" type="text" required maxlength="30" autocomplete="given-name" />
-        </div>
+      <!-- 🌟 Settings form -->
+      <form id="settingsForm" class="welcome-form">
+        <div class="welcome-grid">
+          <!-- First name -->
+          <div class="field">
+            <label for="firstName">First name</label>
+            <input
+              id="firstName"
+              name="firstName"
+              type="text"
+              autocomplete="given-name"
+              required
+            />
+          </div>
 
-        <div class="field-row">
-          <label for="lastInitial">Last initial</label>
-          <div class="inline">
-            <input id="lastInitial" type="text" required maxlength="1" pattern="[A-Za-z]" />
-            <small class="hint">One letter (A–Z).</small>
+          <!-- Last initial -->
+          <div class="field">
+            <label for="lastInitial">Last initial</label>
+            <input
+              id="lastInitial"
+              name="lastInitial"
+              type="text"
+              maxlength="1"
+              required
+            />
+            <small>One letter (A–Z)</small>
+          </div>
+
+          <!-- Grade -->
+          <div class="field">
+            <label for="grade">Grade</label>
+            <select id="grade" name="grade" required>
+              <option value="">Select grade</option>
+              <option value="6">6th grade</option>
+              <option value="7">7th grade</option>
+              <option value="8">8th grade</option>
+              <option value="Other">Other / College / Adult</option>
+            </select>
+          </div>
+
+          <!-- Other grade textbox (disabled by default) -->
+          <div class="field">
+            <label for="gradeOther">Enter your grade / level</label>
+            <input
+              id="gradeOther"
+              name="gradeOther"
+              type="text"
+              placeholder="Only required if selecting 'Other'"
+              disabled
+              class="disabled-input"
+            />
+          </div>
+
+          <!-- Difficulty -->
+          <div class="field">
+            <label for="difficulty">Difficulty</label>
+            <select id="difficulty" name="difficulty" required>
+              <option value="">Select difficulty</option>
+              <option value="Beginner">Beginner (AI is very gentle)</option>
+              <option value="Intermediate">Intermediate</option>
+              <option value="Normal">Normal</option>
+              <option value="Hard">Hard</option>
+              <option value="Extreme">Extreme (AI is very challenging)</option>
+            </select>
           </div>
         </div>
 
-        <div class="field-row">
-          <label for="gradeSelect">Grade</label>
-          <select id="gradeSelect" required>
-            <option value="">Select grade</option>
-            <option value="6">6th Grade</option>
-            <option value="7">7th Grade</option>
-            <option value="8">8th Grade</option>
-            <option value="Other">Other (type below)</option>
-          </select>
-
-          <!-- Shown only if "Other" is selected -->
-          <input
-            id="gradeCustom"
-            class="hidden"
-            type="text"
-            maxlength="32"
-            placeholder="e.g., 5th Grade, College Sophomore, Adult Learner, Graduated"
-          />
-        </div>
-
-        <div class="field-row">
-          <label for="difficulty">Difficulty</label>
-          <select id="difficulty" required>
-            <option value="" disabled selected>Select difficulty</option>
-            <option>Beginner</option><option>Intermediate</option>
-            <option>Normal</option><option>Hard</option><option>Extreme</option>
-          </select>
-        </div>
-
-        <button id="startBtn" class="btn-primary" type="submit">Start Debating</button>
+        <button id="startBtn" type="submit" class="primary-btn">
+          Start Debating
+        </button>
       </form>
     </div>
-  </section>
+  </div>
 
+  <!-- JS: grade toggle + save settings + redirect -->
   <script>
-  // Save to localStorage, then let the form navigate to /debate
-  document.addEventListener("DOMContentLoaded", () => {
-    const SETTINGS_KEY = "debate_user_settings_v1";
-    const form        = document.getElementById("welcomeForm");
-    const startBtn    = document.getElementById("startBtn");
-    const firstName   = document.getElementById("firstName");
-    const lastInitial = document.getElementById("lastInitial");
-    const gradeSelect = document.getElementById("gradeSelect");
-    const gradeCustom = document.getElementById("gradeCustom");
-    const difficulty  = document.getElementById("difficulty");
+    document.addEventListener("DOMContentLoaded", () => {
+      const SETTINGS_KEY = "debate_user_settings_v1";
 
-    // Toggle custom grade input
-    gradeSelect.addEventListener("change", () => {
-      const needsCustom = gradeSelect.value === "Other";
-      gradeCustom.classList.toggle("hidden", !needsCustom);
-      gradeCustom.required = needsCustom;
-      if (!needsCustom) gradeCustom.value = "";
+      const form        = document.getElementById("settingsForm");
+      const firstNameEl = document.getElementById("firstName");
+      const lastInitEl  = document.getElementById("lastInitial");
+      const gradeSelect = document.getElementById("grade");
+      const gradeOther  = document.getElementById("gradeOther");
+      const diffSelect  = document.getElementById("difficulty");
+
+      // --- Grade "Other" behavior ---
+      gradeSelect.addEventListener("change", () => {
+        if (gradeSelect.value === "Other") {
+          gradeOther.disabled = false;
+          gradeOther.classList.remove("disabled-input");
+          gradeOther.placeholder = "e.g., 9th grade, College Freshman, Adult";
+        } else {
+          gradeOther.disabled = true;
+          gradeOther.classList.add("disabled-input");
+          gradeOther.value = "";
+          gradeOther.placeholder = "Only required if selecting 'Other'";
+        }
+      });
+
+      // --- Handle Start Debating ---
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+
+        const firstName = (firstNameEl.value || "").trim();
+        let lastInitial = (lastInitEl.value || "").trim().toUpperCase();
+        const gradeVal  = gradeSelect.value;
+        const diff      = diffSelect.value;
+
+        if (!firstName || !lastInitial || !gradeVal || !diff) {
+          alert("Please fill out all fields before starting.");
+          return;
+        }
+
+        // If "Other", require a description
+        let finalGrade;
+        if (gradeVal === "Other") {
+          const otherText = (gradeOther.value || "").trim();
+          if (!otherText) {
+            alert("Please enter your grade/level when selecting 'Other'.");
+            gradeOther.focus();
+            return;
+          }
+          finalGrade = otherText;        // free-text grade label
+        } else {
+          finalGrade = gradeVal;         // "6", "7", "8"
+        }
+
+        if (lastInitial.length > 1) {
+          lastInitial = lastInitial[0];
+        }
+
+        const settings = {
+          firstName,
+          lastInitial,
+          grade: finalGrade,
+          difficulty: diff
+        };
+
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+
+        // Go to the debate page (served at /debate)
+        window.location.href = "/debate";
+      });
     });
-
-    function getSelectedGrade() {
-      const val = gradeSelect.value;
-      if (val === "Other") {
-        return gradeCustom.value.trim() || "Other";
-      }
-      return val; // "6" | "7" | "8"
-    }
-
-    startBtn?.addEventListener("click", () => form.requestSubmit());
-
-    form.addEventListener("submit", (e) => {
-      // Let the browser handle required fields; if any missing, it will prevent navigation
-      const fName = (firstName?.value || "").trim();
-      const lInit = (lastInitial?.value || "").trim().slice(0,1).toUpperCase();
-      const grd   = getSelectedGrade();
-      const diff  = (difficulty?.value || "").trim();
-
-      if (!fName || !lInit || !grd || !diff) return; // let browser validation show issues
-
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-        firstName: fName,
-        lastInitial: lInit,
-        grade: grd,
-        difficulty: diff,
-        topic: null,
-        ts: Date.now()
-      }));
-      // Navigation will proceed to /debate because of form action
-    });
-  });
   </script>
 </body>
 </html>

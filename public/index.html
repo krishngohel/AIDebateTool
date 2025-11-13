@@ -12,7 +12,7 @@
     <div class="debate-section">
       <h1>AI Debate Tool</h1>
       <p id="roundTracker" style="text-align:center; color:#c69cff; margin-top:-5px;">
-        Round 1 of 3
+        Round 1 of 5
       </p>
 
       <div id="chatBox" class="chat-box"></div>
@@ -45,10 +45,13 @@
       <h2>AI Thought Process</h2>
       <div class="robot-visual">
         <div id="studentThought" class="thought-cloud">Student: ...</div>
-        <div class="robot">
-          <div class="robot-head"></div>
-          <div id="lightBulb" class="light-bulb"></div>
+
+        <!-- Robot container with image + glow -->
+        <div class="robot-container">
+          <img src="robot.png" alt="AI Robot" class="robot-image" />
+          <div class="robot-glow" id="lightBulb"></div>
         </div>
+
         <div id="aiThought" class="thought-cloud">AI: ...</div>
       </div>
     </div>
@@ -68,7 +71,7 @@
     <div class="popup-content">
       <h2>Welcome to the AI Debate Tool! 🎉</h2>
       <p style="text-align:left; line-height:1.5;">
-        In this activity, you'll have a friendly debate with an AI assistant over 3 short rounds.<br><br>
+        In this activity, you'll have a friendly debate with an AI assistant over 5 short rounds.<br><br>
         💬 Be polite and use respectful language.<br>
         💡 Support your ideas with reasons and examples.<br>
         🙌 Listen to the AI’s view — there are no right or wrong answers!<br><br>
@@ -93,7 +96,7 @@
     </div>
   </div>
 
-  <!-- Script -->
+  <!-- Main script -->
   <script src="script.js" defer></script>
 
   <!-- Enable Enter-to-Submit -->

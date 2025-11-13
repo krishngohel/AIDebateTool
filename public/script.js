@@ -1,10 +1,15 @@
-// script.js – relaxed on-topic + logs every turn, with client word-limits + live counter + side picker (modal)
-// Fixes: side modal appears only after topic is chosen; side buttons advance to next stage
+// script.js – full debate flow with word limits, popups, HUD, side picker, robot glow
 document.addEventListener("DOMContentLoaded", () => {
   const SETTINGS_KEY = "debate_user_settings_v1";
   let settings = null;
-  try { settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null"); } catch {}
-  if (!settings) { window.location.replace("/"); return; }
+  try {
+    settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+  } catch {}
+  if (!settings) {
+    // If they hit /debate directly, send them back to welcome page
+    window.location.replace("/");
+    return;
+  }
 
   // Elements
   const chatBox        = document.getElementById("chatBox");
@@ -37,15 +42,18 @@ document.addEventListener("DOMContentLoaded", () => {
   let finishedReady = false;
   let selectedTopic = settings?.topic || null;
   let lastHUD = { meter: 50, leader: "tied", label: "Neck and neck" };
+  let endedForViolation = false;
+  let violationReason = "";
 
-  // Client word-limits (mirror server)
-  function mapDifficultyToBehavior(diff){
+
+  // Map difficulty to client-side max words
+  function mapDifficultyToBehavior(diff) {
     switch (diff) {
       case "Beginner":     return { maxWords: 90 };
       case "Intermediate": return { maxWords: 90 };
       case "Normal":       return { maxWords: 90 };
-      case "Hard":         return { maxWords:130 };
-      case "Extreme":      return { maxWords:200 };
+      case "Hard":         return { maxWords: 130 };
+      case "Extreme":      return { maxWords: 200 };
       default:             return { maxWords: 90 };
     }
   }
@@ -58,6 +66,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateRoundDisplay() {
     safe(roundTracker, el => el.textContent = `Round ${currentRound} of ${MAX_ROUNDS}`);
   }
+
   function addMessage(sender, text) {
     if (!chatBox) return;
     const div = document.createElement("div");
@@ -66,16 +75,19 @@ document.addEventListener("DOMContentLoaded", () => {
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
   }
+
   function showBubble(el, text) {
     if (!el) return;
     el.textContent = text;
     el.classList.add("show");
   }
-  function updateHUD(meter=50, label="Neck and neck") {
+
+  function updateHUD(meter = 50, label = "Neck and neck") {
     if (!hud || !hudFill || !hudLabelEl) return;
     hud.classList.remove("hidden");
     const clamped = Math.max(0, Math.min(100, meter));
     hudFill.style.width = `${clamped}%`;
+    hudFill.setAttribute("aria-valuenow", clamped.toString());
     hudLabelEl.textContent = label;
   }
   updateHUD(50, "Neck and neck");
@@ -98,8 +110,12 @@ document.addEventListener("DOMContentLoaded", () => {
       student: `After the final round${t}, the student leads with convincing, well-supported ideas.`,
       tied:    `After the final round${t}, it’s very close — thoughtful arguments from both sides.`
     };
+
+    // We have 5 rounds now, but keep text generic (“final round”) for last
     let bank = r1;
-    if (round >= 3) bank = r3; else if (round === 2) bank = r2;
+    if (round >= MAX_ROUNDS) bank = r3;
+    else if (round >= Math.ceil(MAX_ROUNDS/2)) bank = r2;
+
     if (who === "ai") return bank.ai;
     if (who === "student") return bank.student;
     if (stance === "agree") return bank.student;
@@ -110,13 +126,11 @@ document.addEventListener("DOMContentLoaded", () => {
   // ===== Live word counter =====
   const counter = document.createElement("div");
   counter.id = "wordCounter";
-  counter.style.fontSize = "12px";
-  counter.style.marginTop = "6px";
-  counter.style.opacity = "0.8";
   counter.textContent = `0 / ${behavior.maxWords} words`;
   if (studentInput && studentInput.parentNode) {
     studentInput.parentNode.insertBefore(counter, studentInput.nextSibling);
   }
+
   function currentWordCount(str) {
     return (str.match(/\b[\w']+\b/g) || []).length;
   }
@@ -124,22 +138,23 @@ document.addEventListener("DOMContentLoaded", () => {
     const used = currentWordCount(studentInput.value || "");
     counter.textContent = `${used} / ${behavior.maxWords} words`;
     const over = used > behavior.maxWords;
-    counter.style.color = over ? "#b91c1c" : "";
+    counter.style.color = over ? "#fca5a5" : "";
     submitBtn.disabled = over || submitBtn.dataset.locked === "1";
   }
   studentInput.addEventListener("input", refreshCounter);
   refreshCounter();
 
-  // ===== Side-selection popup (true modal overlay) =====
+  // ===== Side-selection popup (FOR / AGAINST) =====
   const sidePopup = document.createElement("div");
   sidePopup.id = "sidePopup";
-  // start truly hidden (display:none) to avoid CSS class dependency
-  sidePopup.setAttribute("style",
-    "position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:9999;");
+  sidePopup.className = "popup hidden";   // ⬅️ reuse popup overlay styles
+
   sidePopup.innerHTML = `
-    <div style="background:#16151a;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.5);padding:28px;min-width:320px;max-width:520px;">
+    <div class="popup-content">
       <h2 style="margin:0 0 8px 0;">Pick your side</h2>
-      <p style="margin:0 0 16px 0;opacity:.9">For the topic “<span id="sideTopic"></span>”, are you <strong>FOR</strong> it or <strong>AGAINST</strong> it?</p>
+      <p style="margin:0 0 16px 0;opacity:.9">
+        For the topic “<span id="sideTopic"></span>”, are you <strong>FOR</strong> it or <strong>AGAINST</strong> it?
+      </p>
       <div style="display:flex;gap:10px;margin-bottom:8px;">
         <button id="sideFor" class="btn-primary" type="button">I’m FOR</button>
         <button id="sideAgainst" class="btn-secondary" type="button">I’m AGAINST</button>
@@ -151,13 +166,13 @@ document.addEventListener("DOMContentLoaded", () => {
   function showSidePopup() {
     const span = sidePopup.querySelector("#sideTopic");
     if (span) span.textContent = selectedTopic || "";
-    sidePopup.style.display = "flex";
+    sidePopup.classList.remove("hidden");
   }
   function hideSidePopup() {
-    sidePopup.style.display = "none";
+    sidePopup.classList.add("hidden");
   }
 
-  // After side chosen → unlock UI + start session + intro line
+
   async function afterSideChosen() {
     hideSidePopup();
     topicPopup.classList.add("hidden");
@@ -167,16 +182,20 @@ document.addEventListener("DOMContentLoaded", () => {
     refreshCounter();
     studentInput.focus();
 
-    const opp = settings.side === 'pro' ? 'AGAINST' : settings.side === 'con' ? 'FOR' : 'OPPOSITE';
+    const opp = settings.side === "pro"
+      ? "AGAINST"
+      : settings.side === "con"
+        ? "FOR"
+        : "OPPOSITE";
+
     addMessage(
       "AI",
-      `Great! We’ll debate: “${selectedTopic}”. You are **${(settings.side || '').toUpperCase()}**; I’ll argue the **${opp}** side. Keep arguments school-appropriate. 👍`
+      `Great! We’ll debate: “${selectedTopic}”. You are **${(settings.side || "").toUpperCase()}**; I’ll argue the **${opp}** side. Keep arguments school-appropriate. 👍`
     );
 
     await startSession();
   }
 
-  // Bind side buttons (ensure type="button" so forms don’t swallow clicks)
   sidePopup.querySelector("#sideFor").addEventListener("click", async (e) => {
     e.preventDefault();
     settings.side = "pro";
@@ -207,6 +226,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const data = await resp.json();
     sessionId = data.session_id;
   }
+
   async function logTurn(payload) {
     if (!sessionId) return;
     await fetch("/api/session/logTurn", {
@@ -215,7 +235,8 @@ document.addEventListener("DOMContentLoaded", () => {
       body: JSON.stringify({ session_id: sessionId, ...payload })
     });
   }
-  async function finishSession(finalHud, violationsTotal=0) {
+
+  async function finishSession(finalHud, violationsTotal = 0) {
     if (!sessionId) return;
     await fetch("/api/session/finish", {
       method: "POST",
@@ -230,7 +251,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  async function callDebateAPI(message){
+  async function callDebateAPI(message) {
     const resp = await fetch("/api/debate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -253,7 +274,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!resp.ok) throw new Error(data?.error || "API error");
     return data;
   }
-  async function callExplainAPI(student, reply){
+
+  async function callExplainAPI(student, reply) {
     const resp = await fetch("/api/explain", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -263,63 +285,84 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!resp.ok) throw new Error(data?.error || "Explain error");
     return data;
   }
+
   function outlineToText(outline, fallbackClaim) {
     const claim = outline?.extracted_claim || fallbackClaim || "";
     const steps = Array.isArray(outline?.steps) ? outline.steps.slice(0, 4) : [];
     const strategy = outline?.strategy ? `\n\nStrategy: ${outline.strategy}` : "";
     const bullets = steps.length
-      ? steps.map(s => `• ${s}`).join("\n")
+      ? steps.map((s) => `• ${s}`).join("\n")
       : "• 🔍 Identify main idea\n• 🎯 Give one reason\n• 🧩 Add example\n• 🤝 Suggest compromise";
     return `${claim ? `“${claim}”\n\n` : ""}${bullets}${strategy}`;
   }
 
   // ===== Initial UI state =====
-  safe(finishPopup, el => el.classList.add("hidden"));
-  safe(topicPopup,  el => el.classList.add("hidden"));
-  safe(welcomePopup, el => el.classList.remove("hidden"));
+  safe(finishPopup, (el) => el.classList.add("hidden"));
+  safe(topicPopup,  (el) => el.classList.add("hidden"));
+  safe(welcomePopup, (el) => el.classList.remove("hidden"));
 
   studentInput.disabled = true;
   submitBtn.disabled = true;
   submitBtn.dataset.locked = "1";
 
+  // Welcome → topic popup
   understoodBtn.addEventListener("click", () => {
     welcomePopup.classList.add("hidden");
     topicPopup.classList.remove("hidden");
     confirmTopicBtn.disabled = true;
   });
 
-  topicButtons.forEach(btn => {
+  // Topic selection (re-highlight the chosen one)
+  topicButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
-      topicButtons.forEach(b => b.classList.remove("selected"));
+      topicButtons.forEach((b) => b.classList.remove("selected"));
       btn.classList.add("selected");
       selectedTopic = btn.getAttribute("data-topic");
       confirmTopicBtn.disabled = !selectedTopic;
     });
   });
 
-  // After topic chosen, show side modal (don’t unlock yet)
+  // After topic chosen, show side picker modal
   confirmTopicBtn.addEventListener("click", () => {
     if (!selectedTopic) return;
     const merged = { ...(settings || {}), topic: selectedTopic };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
     settings = merged;
-    // Keep topic modal visible behind? We hide it after side is picked.
     showSidePopup();
   });
 
-  // ===== Finish popup =====
   function showResultPopup(hudObj) {
     if (!finishPopup) return;
     finishPopup.classList.remove("hidden");
+
     const popupTitle = finishPopup.querySelector(".popup-title");
     const popupMsg   = finishPopup.querySelector(".popup-message");
-    const winner     = hudObj?.leader || "tied";
-    let title = "", msg = "";
-    if (winner === "student") { title = "🎉 You Won!"; msg = "Excellent job! Your arguments were strong, clear, and persuasive."; }
-    else if (winner === "ai") { title = "🤖 The AI Won This Time!"; msg = "Great effort! Your ideas were thoughtful. Keep practicing your reasoning!"; }
-    else { title = "🤝 It’s a Tie!"; msg = "Both sides made solid points and stayed on topic. Nice work!"; }
+
+    let title = "";
+    let msg   = "";
+
+    if (endedForViolation) {
+      // 🚫 Special case: debate stopped for rule violation
+      title = "🚫 Debate Ended Early";
+      msg = violationReason ||
+        "The debate was stopped because the rules were broken or school-unsafe language was used.";
+    } else {
+      const winner = hudObj?.leader || "tied";
+      if (winner === "student") {
+        title = "🎉 You Won!";
+        msg = "Excellent job! Your arguments were strong, clear, and persuasive.";
+      } else if (winner === "ai") {
+        title = "🤖 The AI Won This Time!";
+        msg = "Great effort! Your ideas were thoughtful. Keep practicing your reasoning!";
+      } else {
+        title = "🤝 It’s a Tie!";
+        msg = "Both sides made solid points and stayed on topic. Nice work!";
+      }
+    }
+
     if (popupTitle) popupTitle.textContent = title;
     if (popupMsg)   popupMsg.textContent   = msg;
+
     const anyBtn = finishPopup.querySelector("button");
     if (anyBtn) {
       anyBtn.textContent = "Back to Welcome";
@@ -330,25 +373,42 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+
   // ===== Main flow =====
   submitBtn.addEventListener("click", async () => {
-    if (finishedReady) { showResultPopup(lastHUD); return; }
-
-    const text = (studentInput.value || "").trim();
-    if (!text) return;
-    if (!selectedTopic) { topicPopup.classList.remove("hidden"); return; }
-    if (!settings.side) { showSidePopup(); return; }
-
-    // client word limit
-    const used = (text.match(/\b[\w']+\b/g) || []).length;
-    if (used > behavior.maxWords) {
-      alert(`Please keep your argument under ${behavior.maxWords} words for ${settings.difficulty || "Normal"}. You used ${used}.`);
+    if (finishedReady) {
+      showResultPopup(lastHUD);
       return;
     }
 
+    const text = (studentInput.value || "").trim();
+    if (!text) return;
+    if (!selectedTopic) {
+      topicPopup.classList.remove("hidden");
+      return;
+    }
+    if (!settings.side) {
+      showSidePopup();
+      return;
+    }
+
+    // Word limit check
+    const used = currentWordCount(text);
+    if (used > behavior.maxWords) {
+      alert(
+        `Please keep your argument under ${behavior.maxWords} words for ${settings.difficulty || "Normal"}. You used ${used}.`
+      );
+      return;
+    }
+
+    // Thought clouds + robot glow (spark when thinking)
     showBubble(studentThought, `Student: ${text}`);
     showBubble(aiThought, "AI: Thinking…");
-    lightBulb.classList.remove("on");
+    if (lightBulb) {
+      lightBulb.classList.add("on", "spark");
+      setTimeout(() => lightBulb.classList.remove("spark"), 700);
+    }
+
     addMessage(settings?.firstName || "Student", text);
     studentInput.value = "";
     refreshCounter();
@@ -360,7 +420,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (data.hint) addMessage("AI", data.hint);
 
-      if (data.violation) {
+      // Moderation (hard-ban only, but log as violation)
+            if (data.violation) {
         const msg = data.instructions || "Let's keep this discussion school-safe.";
         addMessage("AI", msg);
         showBubble(aiThought, `AI: ${msg}`);
@@ -377,7 +438,15 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         if (data.endDebate) {
-          await finishSession(lastHUD);
+          // 🔴 Mark that the debate ended because of a rule violation
+          endedForViolation = true;
+          violationReason = msg;
+
+          // Send a special winner flag so your CSV/JSON shows why it ended
+          await finishSession(
+            { meter: lastHUD.meter ?? 50, leader: "ended_for_violation" }
+          );
+
           studentInput.disabled = true;
           submitBtn.textContent = "Finish Debate";
           finishedReady = true;
@@ -385,20 +454,32 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      // normal reply
+
+      // Normal reply
       addMessage("AI", data.reply);
-      if (data.hud) { updateHUD(data.hud.meter, data.hud.label); lastHUD = data.hud; }
+      if (data.hud) {
+        updateHUD(data.hud.meter, data.hud.label);
+        lastHUD = data.hud;
+      }
 
       const reasoning = makeLeadReasoning(currentRound, data.hud, data.stance, selectedTopic);
       showBubble(aiThought, reasoning);
 
+      // Keep glow on softly after thinking
+      if (lightBulb) {
+        lightBulb.classList.add("on");
+        // brief extra spark when answer appears
+        lightBulb.classList.add("spark");
+        setTimeout(() => lightBulb.classList.remove("spark"), 600);
+      }
+
+      // Explain panel
       try {
         const outline = await callExplainAPI(text, data.reply);
         showBubble(studentThought, outlineToText(outline, text));
-      } catch {}
-
-      lightBulb.classList.add("on");
-      setTimeout(() => lightBulb.classList.remove("on"), 900);
+      } catch {
+        // ignore explain failure; main debate still works
+      }
 
       await logTurn({
         round: currentRound,
@@ -427,5 +508,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   updateRoundDisplay();
-  addMessage("AI", `Welcome, ${settings.firstName} ${settings.lastInitial}. You chose ${settings.difficulty || "Normal"}.`);
+  addMessage(
+    "AI",
+    `Welcome, ${settings.firstName} ${settings.lastInitial}. You chose ${settings.difficulty || "Normal"}.`
+  );
 });

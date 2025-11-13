@@ -1,277 +1,519 @@
-/* General Layout */
+/* === Base layout (from partner) === */
 body {
+  background: linear-gradient(135deg, #1e002e, #2e004d);
+  font-family: 'Poppins', sans-serif;
+  color: #f3e8ff;
   margin: 0;
-  font-family: "Poppins", sans-serif;
-  background-color: #0f0f1a;
-  color: #f1f1f1;
+  padding: 20px;
   display: flex;
   justify-content: center;
-  align-items: center;
-  height: 100vh;
 }
 
 .container {
   display: flex;
   flex-direction: row;
-  gap: 2rem;
-  width: 95%;
+  justify-content: space-between;
+  width: 90%;
   max-width: 1200px;
+  gap: 20px;
 }
 
 .debate-section, .visualization-section {
-  flex: 1;
-  background: #1b1b2e;
-  border-radius: 20px;
+  background: rgba(35, 0, 60, 0.7);
   padding: 20px;
-  box-shadow: 0 0 25px rgba(115, 75, 255, 0.3);
+  border-radius: 15px;
+  flex: 1;
+  box-shadow: 0 0 25px rgba(180, 0, 255, 0.3);
 }
 
-/* Chat Box */
+.debate-section h1, .visualization-section h2 {
+  color: #e1b6ff;
+  text-align: center;
+}
+
+/* === Chat === */
 .chat-box {
-  background: #121225;
+  background: #250040;
   border-radius: 10px;
-  height: 320px;
+  padding: 15px;
+  height: 300px;
   overflow-y: auto;
   margin-bottom: 10px;
-  padding: 15px;
-  border: 1px solid rgba(198, 156, 255, 0.3);
+  box-shadow: inset 0 0 15px rgba(180, 0, 255, 0.2);
 }
 
+.chat-message {
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+.chat-message.student { color: #c69cff; }
+.chat-message.ai { color: #9ae6ff; }
+
+/* === Input / buttons === */
 textarea {
   width: 100%;
   height: 80px;
   border-radius: 10px;
   border: none;
-  resize: none;
   padding: 10px;
-  font-size: 14px;
-  background: #191933;
-  color: #fff;
+  font-size: 1rem;
+  resize: none;
+  background: #1a0033;
+  color: white;
 }
 
 button {
-  display: inline-block;
-  background: linear-gradient(90deg, #6b4eff, #a573ff);
-  color: #fff;
+  margin-top: 10px;
+  padding: 10px 15px;
+  background: #7a00ff;
   border: none;
   border-radius: 10px;
-  padding: 10px 20px;
-  margin-top: 8px;
+  color: white;
   cursor: pointer;
-  transition: 0.3s ease;
-  font-weight: 500;
+  transition: all 0.3s ease;
 }
-
 button:hover {
-  background: linear-gradient(90deg, #805eff, #bb8fff);
-  transform: translateY(-1px);
+  background: #9a30ff;
+  transform: scale(1.05);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
 }
 
-/* HUD Styles */
-.hud {
-  margin-top: 20px;
-  text-align: center;
+/* Primary / secondary variants (used in side picker) */
+.btn-primary {
+  background: #7a00ff;
+}
+.btn-primary:hover {
+  background: #9a30ff;
+}
+.btn-secondary {
+  background: #312e81;
+}
+.btn-secondary:hover {
+  background: #4338ca;
 }
 
-.hud-bar {
-  width: 100%;
-  height: 18px;
-  background: #222244;
-  border-radius: 10px;
-  overflow: hidden;
-  position: relative;
+/* Word counter */
+#wordCounter {
+  font-size: 12px;
+  margin-top: 4px;
+  text-align: right;
+  opacity: 0.85;
 }
 
-.hud-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #6b4eff, #ff75b7);
-  transition: width 0.6s ease;
-}
-
-.hud-legend {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 5px;
-  font-size: 13px;
-  color: #c7b8ff;
-}
-
-/* Reflection Section */
+/* Reflection (still there if you decide to use it later) */
 .reflection {
   margin-top: 20px;
   text-align: center;
 }
 
-/* Popups */
-.popup {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.85);
+.hidden { display: none; }
+
+/* === HUD (who is winning bar) === */
+.hud {
+  margin-top: 14px;
+}
+.hud-bar {
+  width: 100%;
+  height: 18px;
+  border-radius: 999px;
+  background: #140024;
+  overflow: hidden;
+  box-shadow: inset 0 0 8px rgba(0,0,0,0.7);
+}
+.hud-fill {
+  height: 100%;
+  width: 50%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4ade80, #fbbf24, #f97316, #ef4444);
+  transition: width 0.4s ease;
+}
+.hud-legend {
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-top: 4px;
+  color: #e1b6ff;
+}
+
+/* === Popups: full-screen overlay === */
+.popup {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
   align-items: center;
-  z-index: 99;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 2000; /* above container / robot */
 }
 
 .popup.hidden {
-  display: none;
+  display: none !important;
 }
 
 .popup-content {
-  background: #1e1e35;
-  border-radius: 15px;
-  padding: 30px;
-  max-width: 500px;
-  text-align: center;
-  color: #fff;
-  box-shadow: 0 0 20px rgba(150, 100, 255, 0.4);
+  background: #1a0025;
+  padding: 24px 28px;
+  border-radius: 16px;
+  max-width: 430px;
+  width: 90%;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.7);
 }
 
+.popup-content h2 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: #f3e8ff;
+}
+
+
+/* Topic buttons */
 .topics {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 16px;
 }
-
 .topic-btn {
-  background: #26264d;
-  border: 1px solid #a573ff;
-  border-radius: 8px;
-  color: #fff;
-  padding: 8px 15px;
-  transition: all 0.3s;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  background: #2a0040;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: #f3e8ff;
+  cursor: pointer;
 }
-
-.topic-btn:hover, .topic-btn.active {
-  background: linear-gradient(90deg, #7c5bff, #d57bff);
+.topic-btn:hover {
+  background: #3a005f;
 }
-
 .topic-btn.selected {
-  background: #a875ff;
-  color: white;
-  border-color: #a875ff;
+  border-color: #e1b6ff;
+  background: #4b0082;
 }
 
-
-/* =========================================
-   ROBOT VISUALIZATION - Enhanced AI Look
-   ========================================= */
-.visualization-section {
-  text-align: center;
+/* Muted helper */
+.muted {
+  color: #c4b5fd;
+  font-size: 0.85rem;
 }
 
+/* === Visualization / robot (from partner) === */
 .robot-visual {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-around;
+  gap: 25px;
   margin-top: 40px;
   position: relative;
 }
 
 .thought-cloud {
-  background: rgba(155, 120, 255, 0.15);
-  border: 1px solid rgba(198, 156, 255, 0.4);
-  border-radius: 12px;
-  padding: 10px 14px;
-  width: 40%;
-  font-size: 14px;
-  color: #e0d8ff;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 0 10px rgba(115, 75, 255, 0.25);
-  animation: pulseCloud 4s infinite ease-in-out;
+  background: #fff3ff;
+  color: #3a005f;
+  padding: 10px 20px;
+  border-radius: 25px;
+  font-weight: 600;
+  text-align: center;
+  max-width: 250px;
+  box-shadow: 0 0 15px rgba(255,255,255,0.4);
+  opacity: 0;
+  transform: scale(0.9);
+  transition: all 0.6s ease;
 }
 
-@keyframes pulseCloud {
-  0%, 100% { opacity: 0.9; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.02); }
+.thought-cloud.show {
+  opacity: 1;
+  transform: scale(1);
 }
 
-/* --- ROBOT BODY --- */
-.robot {
+/* Image-based robot */
+.robot-container {
   position: relative;
-  width: 110px;
-  height: 160px;
-  background: linear-gradient(180deg, #2b2b47, #1a1a2f);
-  border-radius: 20px;
-  box-shadow: inset 0 0 10px rgba(150, 120, 255, 0.3),
-              0 0 25px rgba(115, 75, 255, 0.4);
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  padding-top: 25px;
-  transition: transform 0.3s;
+  align-items: center;
+  width: 180px;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
 }
 
-.robot:hover {
-  transform: scale(1.03);
+.robot-image {
+  width: 100%;
+  max-width: 180px;
+  height: auto;
+  filter: drop-shadow(0 0 10px rgba(180, 0, 255, 0.3));
+  transition: transform 0.6s ease, filter 0.3s ease;
 }
 
-/* --- ROBOT HEAD --- */
-.robot-head {
+.robot-container:hover .robot-image {
+  transform: scale(1.05);
+  filter: drop-shadow(0 0 15px rgba(200, 100, 255, 0.5));
+}
+
+/* Robot Glow */
+.robot-glow {
   position: absolute;
-  top: -45px;
+  width: 27px;
+  height: 31px;
+  background: radial-gradient(
+      ellipse 50% 50% at 50% 35%, 
+      rgba(255, 255, 150, 0.9) 0%, 
+      rgba(255, 255, 100, 0.3) 40%, 
+      rgba(255, 255, 100, 0.05) 70%, 
+      transparent 100%
+    ), 
+    radial-gradient(
+      ellipse 25% 20% at 50% 85%, 
+      rgba(255, 255, 150, 0.8) 0%, 
+      rgba(255, 255, 100, 0.1) 60%, 
+      transparent 100%
+    );
+  border-radius: 25% 23% 50% 50% / 37% 37% 55% 55%;
+  top: 67%;
   left: 50%;
-  transform: translateX(-50%);
-  width: 80px;
-  height: 60px;
-  background: radial-gradient(circle at 30% 30%, #3a3a60, #1b1b30);
-  border-radius: 12px;
-  border: 2px solid #9e8aff;
-  box-shadow: 0 0 15px rgba(150, 100, 255, 0.5);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.8s ease-in-out;
+  box-shadow: 0 0 12px 6px rgba(255, 255, 180, 0.5);
 }
 
-/* Eyes */
-.robot-head::before,
-.robot-head::after {
-  content: "";
-  position: absolute;
-  top: 20px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: radial-gradient(circle, #a573ff, #663aff);
-  box-shadow: 0 0 10px #a573ff;
-  animation: blink 5s infinite;
+/* Base pulsing glow */
+.robot-glow.on {
+  opacity: 1;
+  animation: pulseGlow 1.5s ease-in-out infinite;
 }
 
-.robot-head::before {
-  left: 20px;
+/* Flash / spark when AI is thinking */
+.robot-glow.spark {
+  animation: glowFlash 0.6s ease-in-out forwards;
 }
 
-.robot-head::after {
-  right: 20px;
-}
-
-@keyframes blink {
-  0%, 90%, 100% { opacity: 1; }
-  95% { opacity: 0; }
-}
-
-/* --- LIGHT BULB --- */
-.light-bulb {
-  position: absolute;
-  top: 35px;
-  width: 25px;
-  height: 25px;
-  border-radius: 50%;
-  background: radial-gradient(circle, #ff70d0, #aa3fff);
-  box-shadow: 0 0 25px #c273ff, 0 0 60px #c273ff;
-  animation: pulseLight 2.5s infinite ease-in-out;
-}
-
-@keyframes pulseLight {
+/* Pulse animation */
+@keyframes pulseGlow {
   0%, 100% {
-    transform: scale(1);
-    box-shadow: 0 0 25px #c273ff, 0 0 60px #c273ff;
+    box-shadow: 0 0 18px 8px rgba(255, 255, 200, 0.5);
   }
   50% {
-    transform: scale(1.15);
-    box-shadow: 0 0 35px #d48aff, 0 0 80px #d48aff;
+    box-shadow: 0 0 28px 15px rgba(255, 255, 220, 0.9);
   }
 }
 
-/* Utility */
-.hidden {
-  display: none;
+/* Flash animation */
+@keyframes glowFlash {
+  0% {
+    background: radial-gradient(
+        ellipse 50% 50% at 50% 35%, 
+        rgba(255, 255, 150, 0.9) 0%, 
+        rgba(255, 255, 100, 0.3) 40%, 
+        rgba(255, 255, 100, 0.05) 70%, 
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 25% 20% at 50% 85%, 
+        rgba(255, 255, 150, 0.8) 0%, 
+        rgba(255, 255, 100, 0.1) 60%, 
+        transparent 100%
+      );
+  }
+  50% {
+    background: radial-gradient(
+        ellipse 50% 50% at 50% 35%, 
+        rgba(255, 255, 255, 1) 0%, 
+        rgba(255, 255, 180, 0.6) 40%, 
+        rgba(255, 255, 140, 0.1) 70%, 
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 25% 20% at 50% 85%, 
+        rgba(255, 255, 255, 0.9) 0%, 
+        rgba(255, 255, 150, 0.05) 60%, 
+        transparent 100%
+      );
+  }
+  100% {
+    background: radial-gradient(
+        ellipse 50% 50% at 50% 35%, 
+        rgba(255, 255, 150, 0.9) 0%, 
+        rgba(255, 255, 100, 0.3) 40%, 
+        rgba(255, 255, 100, 0.05) 70%, 
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 25% 20% at 50% 85%, 
+        rgba(255, 255, 150, 0.8) 0%, 
+        rgba(255, 255, 100, 0.1) 60%, 
+        transparent 100%
+      );
+  }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .container {
+    flex-direction: column;
+  }
+  .robot-container {
+    width: 140px;
+  }
+}
+
+/* ===== Welcome Page Layout ===== */
+
+.welcome-page {
+  min-height: 100vh;
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: radial-gradient(circle at top, #2c1052 0, #090014 60%, #05000a 100%);
+  color: #f7f2ff;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.welcome-shell {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 16px;
+}
+
+.welcome-card {
+  width: 100%;
+  max-width: 720px;
+  background: rgba(10, 5, 30, 0.95);
+  border-radius: 24px;
+  padding: 32px 32px 28px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(198, 156, 255, 0.35);
+  backdrop-filter: blur(12px);
+}
+
+/* ===== Typography ===== */
+
+.welcome-title {
+  font-size: clamp(2.4rem, 3.2vw, 3.1rem);
+  margin: 0 0 8px;
+  color: #fdf8ff;
+}
+
+.welcome-subtitle {
+  margin: 0 0 24px;
+  color: rgba(244, 235, 255, 0.82);
+  line-height: 1.5;
+}
+
+/* ===== Form layout ===== */
+
+.welcome-form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.welcome-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 20px;
+}
+
+@media (max-width: 640px) {
+  .welcome-card {
+    padding: 24px 20px 20px;
+  }
+  .welcome-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Form controls ===== */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.95rem;
+}
+
+.field label {
+  font-weight: 600;
+  color: #e7d7ff;
+}
+
+.field small {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+.field input,
+.field select {
+  border-radius: 999px;
+  border: 1px solid rgba(198, 156, 255, 0.55);
+  background: rgba(13, 7, 40, 0.85);
+  color: #fdf8ff;
+  padding: 8px 14px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.field input::placeholder {
+  color: rgba(210, 190, 255, 0.6);
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: #c77dff;
+  box-shadow: 0 0 0 1px rgba(199, 125, 255, 0.6);
+  background: rgba(19, 10, 60, 0.95);
+}
+
+/* ===== Primary button ===== */
+
+.primary-btn {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 10px 26px;
+  border-radius: 999px;
+  border: none;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  background: linear-gradient(135deg, #c77dff, #7c3aed);
+  color: #fff;
+  box-shadow: 0 12px 30px rgba(124, 58, 237, 0.55);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+}
+
+.primary-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 16px 40px rgba(124, 58, 237, 0.7);
+}
+
+.primary-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 8px 22px rgba(124, 58, 237, 0.6);
+}
+
+.primary-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.disabled-input {
+  opacity: 0.5;
+  background-color: #2a1f3a;
+  cursor: not-allowed;
 }
