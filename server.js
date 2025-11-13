@@ -464,7 +464,7 @@ const label = leader === "ai"
 data.score     = score;
 data.round     = round;
 data.nextRound = round + 1;
-data.endDebate = data.nextRound > 3;
+data.endDebate = data.nextRound > 5;
 if (!data.reply) data.reply = "Thanks! I see your point—here’s one idea to consider on this topic.";
 data.hud = { meter, leader, label, difficulty };
 if (hint) data.hint = hint;

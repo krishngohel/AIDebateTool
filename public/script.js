@@ -33,7 +33,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // State
   let currentRound = 1;
-  const MAX_ROUNDS = 3;
+  const MAX_ROUNDS = 5;
   let finishedReady = false;
   let selectedTopic = settings?.topic || null;
   let lastHUD = { meter: 50, leader: "tied", label: "Neck and neck" };
