@@ -147,6 +147,13 @@ button:hover {
   background: linear-gradient(90deg, #7c5bff, #d57bff);
 }
 
+.topic-btn.selected {
+  background: #a875ff;
+  color: white;
+  border-color: #a875ff;
+}
+
+
 /* =========================================
    ROBOT VISUALIZATION - Enhanced AI Look
    ========================================= */
